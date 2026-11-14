@@ -1189,14 +1189,32 @@ func _check_cherubs(delta: float) -> void:
 				c["rested"] = true
 				broadcast_fx("cherub_kick", [cid, node.global_position, Vector3.ZERO])
 		var near := false
+		var closest := Vector3.ZERO      # from the cherub to the nearest demon it can sense
+		var closest_dist := INF
 		for d in targets:
-			if d.global_position.distance_to(c["pos"]) <= Skills.CHERUB_RADIUS:
+			var dist: float = d.global_position.distance_to(c["pos"])
+			if dist <= Skills.CHERUB_RADIUS:
 				near = true
+				if dist < closest_dist:
+					closest_dist = dist
+					closest = d.global_position - c["pos"]
 		if near != c["alarmed"]:
 			c["alarmed"] = near
 			broadcast_fx("cherub_alarm", [cid, near])
 			if near:
 				print("[decider] cherub alarm: demon nearby")
+		# An alarmed cherub creeps toward that demon. Only tell everyone when its
+		# heading really changes, not four times a second.
+		var creep := Vector3.ZERO
+		closest.y = 0.0
+		if near and closest.length() > Skills.CHERUB_CREEP_STOP:
+			creep = closest.normalized() * Skills.CHERUB_CREEP_SPEED
+		var old: Vector3 = c.get("creep", Vector3.ZERO)
+		if creep.is_zero_approx() != old.is_zero_approx() or (not creep.is_zero_approx() and creep.angle_to(old) > 0.2):
+			c["creep"] = creep
+			if creep.is_zero_approx():
+				c["rested"] = false      # when it has stopped, tell everyone exactly where
+			broadcast_fx("cherub_creep", [cid, creep])
 
 
 # ---------- effects everyone sees ----------
@@ -1228,6 +1246,9 @@ func fx(kind: String, args: Array) -> void:
 		"cherub_kick":
 			if cherubs.has(args[0]) and is_instance_valid(cherubs[args[0]]):
 				cherubs[args[0]].launch(args[1], args[2])
+		"cherub_creep":
+			if cherubs.has(args[0]) and is_instance_valid(cherubs[args[0]]):
+				cherubs[args[0]].creep = args[1]
 		"cherub_alarm":
 			if cherubs.has(args[0]) and is_instance_valid(cherubs[args[0]]):
 				cherubs[args[0]].alarmed = args[1]
