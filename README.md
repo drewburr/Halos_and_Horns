@@ -11,7 +11,7 @@ One small test map, placeholder shapes for everything.
 - **Online:** one player hosts, friends join by address. Mobification rules: caught demons are redeemed and switch to the angels. About one angel per three players.
 - **Skills:** pick 2 per side on the main menu or in the lobby. Angels: Grappling Hook, Alarm Cherub, Vacuum Orb, Holy Leap (steer it in the air; press its key again mid-air to Cloud Stomp). Demons: Possess, Fly, Hellfire (costs Hatred; angels in the fire are slowed and their blessings burn away).
 - **Demons** can **transform** into a copy of any prop (click), or with skills **become** the real one (Possess) and **fly** (hold the key: you rise while Hatred lasts, gravity brings you down; no fall damage).
-- The Alarm Cherub is just a cherub until a demon comes close; then it squawks and shows its detection bubble. Shoot it with a blessing to send it skidding down a hallway.
+- The Alarm Cherub just hovers there tooting its little horn until a demon comes close; then it blasts the horn and shows its detection bubble. Shoot it with a blessing to send it flying down a hallway.
 - Every prop form has its own health and speed: small = fragile but quick, big = tanky but slow. Your health bar shows how much is left; the number shows real hit points for your current form.
 
 ## Playing (Windows)
