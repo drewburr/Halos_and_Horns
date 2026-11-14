@@ -246,6 +246,9 @@ func _run() -> void:
 	check(near_c != null and near_c._bubble.visible, "...and shows its detection bubble")
 	check(far_c != null and not far_c._bubble.visible, "...a calm cherub shows no bubble, it's just a cherub")
 
+	var creep_from: Vector3 = near_c.global_position if near_c != null else Vector3.ZERO
+	var creep_gap: float = creep_from.distance_to(bot.global_position)
+
 	# Knock the calm cherub down the "hallway" with a blessing.
 	if far_c != null:
 		var c_start: Vector3 = far_c.global_position
@@ -260,6 +263,14 @@ func _run() -> void:
 		check(absf(far_c.velocity.x) < 0.3, "...and it slides to a stop")
 		check(main._auth_cherubs.has(3) and main._auth_cherubs[3]["pos"].distance_to(far_c.global_position) < 0.5,
 				"...and it keeps watching from where it landed")
+
+	# Meanwhile the alarmed one has been creeping toward its demon, very slowly.
+	if near_c != null and is_instance_valid(near_c):
+		var crept: float = near_c.global_position.distance_to(creep_from)
+		var gap: float = near_c.global_position.distance_to(bot.global_position)
+		check(gap < creep_gap - 0.2, "an alarmed cherub creeps toward the demon (%.1f m -> %.1f m away)" % [creep_gap, gap])
+		check(crept < 1.6, "...very slowly (%.2f m in 2.5 s)" % crept)
+		check(far_c != null and far_c.creep == Vector3.ZERO, "...and a calm one stays put")
 
 	# Vacuum: pulls nearby props in and yanks the demon.
 	var center: Vector3 = bot.global_position + Vector3(3, 0, 0)
