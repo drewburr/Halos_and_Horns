@@ -6,8 +6,8 @@ extends RefCounted
 
 const SKILLS := {
 	# ---- angels ----
-	"grapple": {"team": "angel", "label": "Grappling Hook", "cooldown": 6.0,
-		"desc": "Zip to walls and roofs, or snag a demon: damages it and drags it to you."},
+	"dash": {"team": "angel", "label": "Flying Dash", "cooldown": 4.0,
+		"desc": "Dash any way you like: where you're looking (up into the air too), or the way your movement keys point. You keep the speed afterwards - until you turn. Wide, slow turns cost a little; a quick 180 or a strafe kills it."},
 	"cherub": {"team": "angel", "label": "Alarm Cherub", "cooldown": 10.0,
 		"desc": "Send out a cherub for 9 seconds. It hovers there tooting its little horn; if a demon comes close it blasts the horn and shows its detection bubble. Hit it with a blessing to send it flying off to check further away."},
 	"vacuum": {"team": "angel", "label": "Vacuum Orb", "cooldown": 8.0,
@@ -25,13 +25,10 @@ const SKILLS := {
 		"desc": "Become a real prop instead of a copy (press its key while aiming at the prop). The one you leave behind slowly dissolves."},
 }
 
-const DEFAULTS := {"angel": ["grapple", "cherub"], "demon": ["possess", "fly"]}
+const DEFAULTS := {"angel": ["dash", "cherub"], "demon": ["possess", "fly"]}
 const SLOT_KEYS := ["Q", "Right click"]
 
 # Tuning
-const GRAPPLE_RANGE := 40.0
-const GRAPPLE_SPEED := 20.0       # m/s while zipping toward the hook
-const GRAPPLE_DAMAGE := 20
 const CHERUB_RANGE := 15.0       # how far away you can drop it
 const CHERUB_RADIUS := 6.0       # detection radius
 const CHERUB_LIFETIME := 9.0
@@ -87,6 +84,8 @@ static func clean_loadout(team: String, wanted) -> Array:
 		var id = wanted[i]
 		if id == "chicken":
 			id = "cherub"   # renamed in 0.4
+		if id == "grapple":
+			id = "dash"     # the hook became the Flying Dash
 		if typeof(id) == TYPE_STRING and SKILLS.has(id) and SKILLS[id]["team"] == team \
 				and not SKILLS[id].has("part_of") and not id in out:
 			out[i] = id

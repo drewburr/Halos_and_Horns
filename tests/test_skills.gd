@@ -47,6 +47,19 @@ func aim_at(player, target: Node3D, aim_height: float, dist := 3.5) -> bool:
 	return false
 
 
+# Stand still in the open, facing -z, ready to dash.
+# With up_high, floating well above the props and roofs (the test switches gravity off).
+func dash_setup(player, up_high := false) -> void:
+	player.test_input = {}
+	player.global_position = Vector3(8, 14.0 if up_high else 0.1, 18)
+	player.rotation = Vector3.ZERO
+	player.pivot.rotation.x = 0.0
+	player.velocity = Vector3.ZERO
+	player.clear_dash()
+	player.skill_cd.clear()
+	await frames(5)
+
+
 func visible_props() -> Array:
 	var out := []
 	for p in main.props:
@@ -271,48 +284,112 @@ func _run() -> void:
 	await frames(2)
 	check(bot2.health == health_before - Skills.MELEE_DAMAGE, "F melee hits a demon (%d -> %d)" % [health_before, bot2.health])
 
-	# Grappling hook: hits a demon (damage + pull) ...
-	var bot3 = get_nodes_in_group("demon")[2]
-	player.loadout["angel"] = ["grapple", "leap"]
-	check(await aim_at(player, bot3, 0.3, 8.0), "lined up a demon 8 m away")
-	var hp3: int = bot3.health
-	var d3: float = bot3.global_position.distance_to(player.global_position)
-	player.use_skill(0)
-	await frames(60)
-	check(bot3.health == hp3 - Skills.GRAPPLE_DAMAGE, "the hook damages a demon")
-	check(bot3.global_position.distance_to(player.global_position) < d3 - 3.0, "...and drags it to us")
+	# Flying Dash: a burst in any direction that leaves momentum behind.
+	player.loadout["angel"] = ["dash", "leap"]
+	# Up in the air with gravity off, so no prop or wall gets in the way.
+	var saved: Dictionary = player.tuning.duplicate()
+	player.tuning["gravity_scale"] = 0.0
+	player.tuning["dash_air_drag"] = 9.0
+	await dash_setup(player, true)
+	check(player.use_skill(0), "Flying Dash")
+	check(not player.use_skill(0), "...which then has a cooldown")
+	await frames(20)
+	var burst: float = 18.0 - player.global_position.z
+	check(burst > 3.5 and absf(player.global_position.x - 8.0) < 0.3, "dashed straight ahead (%.1f m)" % burst)
+	var gave: float = player.dash_momentum()
+	check(gave > 10.0, "...and kept momentum afterwards (%.1f m/s)" % gave)
+	var z_then: float = player.global_position.z
+	await frames(20)
+	check(player.global_position.z < z_then - 1.5, "the momentum carries you on with no keys held")
+	check(player.dash_momentum() > 5.0, "...for a while")
+	check(player.dash_momentum() < gave, "...fading as you slide (%.1f m/s)" % player.dash_momentum())
+	await frames(150)
+	check(player.dash_momentum() == 0.0, "...until it's gone")
 
-	# ... or zips us up to the roof of a building.
-	player.skill_cd.clear()
-	player.global_position = Vector3(8, 0.1, 18)
-	player.rotation = Vector3.ZERO
-	player.velocity = Vector3.ZERO
-	await frames(5)
-	# Aiming at the open sky (the invisible ceiling is in reach): nothing to hook.
-	player.pivot.rotation.x = 1.2
+	# Turning costs momentum. (No fading here, so only the turning counts.)
+	player.tuning["dash_air_drag"] = 0.0
+	await dash_setup(player, true)
+	player.use_skill(0)
+	await frames(20)
+	gave = player.dash_momentum()
+	player.rotate_y(PI)
 	await frames(2)
-	check(not player.use_skill(0), "the hook can't grab the sky")
-	await frames(30)
-	check(player.global_position.y < 1.0, "...and doesn't pull you anywhere (y %.1f)" % player.global_position.y)
-	# The invisible map walls still stop you.
-	player.global_position = Vector3(26, 0.1, 18)
+	check(player.dash_momentum() == 0.0, "a quick 180 kills all the momentum")
+
+	await dash_setup(player, true)
+	player.use_skill(0)
+	await frames(20)
+	for i in 120:
+		player.rotate_y(PI / 120.0)
+		await frames(1)
+	var kept: float = player.dash_momentum() / gave
+	check(kept > 0.5 and kept < 0.8, "a wide, slow 180 keeps most of it (%d%%)" % roundi(kept * 100.0))
+	var facing: Vector3 = -player.global_transform.basis.z
+	check(player.velocity.normalized().dot(facing) > 0.95, "...and it follows you round the turn")
+
+	await dash_setup(player, true)
+	player.use_skill(0)
+	await frames(20)
+	for i in 30:
+		player.rotate_y(PI / 30.0)
+		await frames(1)
+	var kept_fast: float = player.dash_momentum() / gave
+	check(kept_fast < kept - 0.3, "the same turn made faster loses more (%d%%)" % roundi(kept_fast * 100.0))
+
+	await dash_setup(player, true)
+	player.use_skill(0)
+	await frames(20)
 	player.test_input = {"dir": Vector2(1, 0)}
+	await frames(2)
+	kept = player.dash_momentum() / gave
+	check(kept > 0.4 and kept < 0.6, "strafing sideways costs half (%d%%)" % roundi(kept * 100.0))
+	player.test_input = {"dir": Vector2(-1, 0)}
+	await frames(2)
+	check(player.dash_momentum() == 0.0, "...and strafing back the other way kills the rest")
+	player.test_input = {}
+	player.tuning = saved
+	# On a roof (no props up there to bump into), with a short burst so we stay on it.
+	player.tuning["dash_time"] = 0.1
+	await dash_setup(player)
+	player.global_position = Vector3(8, 4.1, 10.5)
+	await frames(5)
+	player.use_skill(0)
+	await frames(8)
+	gave = player.dash_momentum()
+	await frames(10)
+	player.tuning["dash_time"] = saved["dash_time"]
+	check(gave > 8.0 and player.is_on_floor() and player.dash_momentum() < gave - 1.0, "on the ground the momentum fades faster (%.1f -> %.1f m/s)" % [gave, player.dash_momentum()])
+
+	# Any direction: backwards with the back key held, or up into the air.
+	await dash_setup(player)
+	player.test_input = {"dir": Vector2(0, 1)}
+	await frames(1)
+	player.use_skill(0)
+	await frames(15)
+	player.test_input = {}
+	check(player.global_position.z > 18.0 + 3.0, "holding back dashes backwards (%.1f m)" % (player.global_position.z - 18.0))
+	await dash_setup(player)
+	player.pivot.rotation.x = 1.0
+	await frames(2)
+	player.use_skill(0)
+	var top := 0.0
+	for i in 90:
+		await frames(1)
+		top = maxf(top, player.global_position.y)
+	check(top > 5.0, "looking up dashes into the air (%.1f m up)" % top)
+	player.pivot.rotation.x = 0.0
+	# The invisible map walls still stop you.
+	await dash_setup(player)
+	player.global_position = Vector3(22, 0.1, 18)
+	player.rotation.y = -PI / 2.0
+	await frames(2)
+	player.use_skill(0)
+	player.test_input = {"dir": Vector2(0, -1)}
 	await frames(90)
 	player.test_input = {}
-	check(player.global_position.x < 28.6, "the invisible map wall still stops you (x %.1f)" % player.global_position.x)
-	player.global_position = Vector3(8, 0.1, 18)
-	player.velocity = Vector3.ZERO
-	player.skill_cd.clear()
-	player.pivot.rotation.x = 0.0
-	await frames(2)
-	var eye: Vector3 = player.camera.global_position
-	var roof_edge := Vector3(8, 3.9, 11)   # the 4 m tall building at (8, 8)
-	player.pivot.rotation.x = atan2(roof_edge.y - eye.y, eye.z - roof_edge.z)
-	await frames(2)
-	check(player.use_skill(0), "fired the hook at the building")
-	await frames(120)
-	check(player.global_position.y > 3.8 and player.is_on_floor(),
-			"zipped up and landed on the roof (y %.1f)" % player.global_position.y)
+	check(player.global_position.x < 28.6, "the invisible map wall still stops a dash (x %.1f)" % player.global_position.x)
+	check(player.dash_momentum() == 0.0, "...and running into it ends the momentum")
+	check(Skills.clean_loadout("angel", ["grapple", "leap"]) == ["dash", "leap"], "a saved Grappling Hook pick becomes the Flying Dash")
 
 	# Holy Leap
 	player.global_position = Vector3(-20, 0.1, -20)
