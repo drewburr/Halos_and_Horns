@@ -114,7 +114,7 @@ func _new_record(player_name: String) -> Dictionary:
 
 
 func _clean_name(n: String) -> String:
-	n = n.strip_edges().substr(0, 16)
+	n = displayable_name(n).substr(0, 16)
 	if n == "":
 		n = "Player"
 	var taken := []
@@ -132,21 +132,53 @@ func _clean_name(n: String) -> String:
 # spacing, punctuation, l33t numbers, look-alike letters and stretched-out
 # letters all still count).
 const db := ["DICK BUBBLE", "DICK BBL"]
-const _LOOKALIKE := {"0": "O", "1": "I", "!": "I", "|": "I", "3": "E", "4": "A", "@": "A",
-	"5": "S", "$": "S", "7": "T", "8": "B", "6": "G", "9": "G",
-	"А": "A", "В": "B", "С": "C", "Е": "E", "К": "K", "О": "O", "Р": "P", "Т": "T",
-	"Х": "X", "І": "I", "İ": "I", "Ι": "I", "Κ": "K", "Β": "B", "Ϲ": "C", "Ꮯ": "C"}
+# Every accented Latin letter and every foreign look-alike, and the plain letter it reads as.
+const _FOLD_FROM := "ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåçèéêëìíîïðñòóôõöøùúûüýþÿĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽžſƀƁƂƃƄƅƠơƯưǍǎǏǐǑǒǓǔǕǖǗǘǙǚǛǜǞǟǠǡǦǧǨǩǪǫǬǭǰǴǵǸǹǺǻȀȁȂȃȄȅȆȇȈȉȊȋȌȍȎȏȐȑȒȓȔȕȖȗȘșȚțȞȟȦȧȨȩȪȫȬȭȮȯȰȱȲȳḀḁḂḃḄḅḆḇḈḉḊḋḌḍḎḏḐḑḒḓḔḕḖḗḘḙḚḛḜḝḞḟḠḡḢḣḤḥḦḧḨḩḪḫḬḭḮḯḰḱḲḳḴḵḶḷḸḹḺḻḼḽḾḿṀṁṂṃṄṅṆṇṈṉṊṋṌṍṎṏṐṑṒṓṔṕṖṗṘṙṚṛṜṝṞṟṠṡṢṣṤṥṦṧṨṩṪṫṬṭṮṯṰṱṲṳṴṵṶṷṸṹṺṻṼṽṾṿẀẁẂẃẄẅẆẇẈẉẊẋẌẍẎẏẐẑẒẓẔẕẖẗẘẙẛẠạẢảẤấẦầẨẩẪẫẬậẮắẰằẲẳẴẵẶặẸẹẺẻẼẽẾếỀềỂểỄễỆệỈỉỊịỌọỎỏỐốỒồỔổỖỗỘộỚớỜờỞởỠỡỢợỤụỦủỨứỪừỬửỮữỰựỲỳỴỵỶỷỸỹАаВвБбЬьЪъЫыСсЕеЁёКкҚқЌќМмНнОоРрТтХхУуІіЇїЈјЅѕДдЦцЧЛлӀӏΑαΒβΕεΙιΚκΜΝΟοΡρΤΧχΥυϹϲᏟℂⅮⅾⅠⅰℓ"
+const _FOLD_TO := "AAAAAACEEEEIIIIDNOOOOOOUUUUYPSAAAAAACEEEEIIIIDNOOOOOOUUUUYPYAAAAAACCCCCCCCDDDDEEEEEEEEEEGGGGGGGGHHHHIIIIIIIIIIJJKKLLLLLLLLNNNNNNOOOOOORRRRRRSSSSSSSSTTTTTTUUUUUUUUUUUUWWYYYZZZZZZSBBBBBBOOUUAAIIOOUUUUUUUUUUAAAAGGKKOOOOJGGNNAAAAAAEEEEIIIIOOOORRRRUUUUSSTTHHAAEEOOOOOOOOYYAABBBBBBCCDDDDDDDDDDEEEEEEEEEEFFGGHHHHHHHHHHIIIIKKKKKKLLLLLLLLMMMMMMNNNNNNNNOOOOOOOOPPPPRRRRRRRRSSSSSSSSSSTTTTTTTTUUUUUUUUUUVVVVWWWWWWWWWWXXXXYYZZZZZZHTWYSAAAAAAAAAAAAAAAAAAAAAAAAEEEEEEEEEEEEEEEEIIIIOOOOOOOOOOOOOOOOOOOOOOOOUUUUUUUUUUUUUUYYYYYYYYAABBBBBBBBBBCCEEEEKKKKKKMMHHOOPPTTXXYYIIIIJJSSDDUU4LLIIAABBEEIIKKMNOOPPTXXYUCCCCDDIIL"
+# Letters with accents are fine in names (Anium, pN...); other alphabets are dropped.
+const _NAME_EXTRA := "ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåçèéêëìíîïðñòóôõöøùúûüýþÿĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽžſƀƁƂƃƄƅƠơƯưǍǎǏǐǑǒǓǔǕǖǗǘǙǚǛǜǞǟǠǡǦǧǨǩǪǫǬǭǰǴǵǸǹǺǻȀȁȂȃȄȅȆȇȈȉȊȋȌȍȎȏȐȑȒȓȔȕȖȗȘșȚțȞȟȦȧȨȩȪȫȬȭȮȯȰȱȲȳḀḁḂḃḄḅḆḇḈḉḊḋḌḍḎḏḐḑḒḓḔḕḖḗḘḙḚḛḜḝḞḟḠḡḢḣḤḥḦḧḨḩḪḫḬḭḮḯḰḱḲḳḴḵḶḷḸḹḺḻḼḽḾḿṀṁṂṃṄṅṆṇṈṉṊṋṌṍṎṏṐṑṒṓṔṕṖṗṘṙṚṛṜṝṞṟṠṡṢṣṤṥṦṧṨṩṪṫṬṭṮṯṰṱṲṳṴṵṶṷṸṹṺṻṼṽṾṿẀẁẂẃẄẅẆẇẈẉẊẋẌẍẎẏẐẑẒẓẔẕẖẗẘẙẛẠạẢảẤấẦầẨẩẪẫẬậẮắẰằẲẳẴẵẶặẸẹẺẻẼẽẾếỀềỂểỄễỆệỈỉỊịỌọỎỏỐốỒồỔổỖỗỘộỚớỜờỞởỠỡỢợỤụỦủỨứỪừỬửỮữỰựỲỳỴỵỶỷỸỹ"
+const _LEET := {"0": "O", "1": "I", "!": "I", "|": "I", "3": "E", "4": "A", "@": "A",
+	"5": "S", "$": "S", "7": "T", "8": "B", "6": "G", "9": "G", "&": "B"}
+
+
+# What a name reads as: plain capital letters, accents and look-alikes folded,
+# l33t numbers turned back into letters, stretched letters collapsed, everything else gone.
+static func name_reads_as(n: String) -> String:
+	var flat := ""
+	for ch in _narrow(n):
+		var i := _FOLD_FROM.find(ch)
+		if i >= 0:
+			ch = _FOLD_TO[i]
+		ch = _LEET.get(ch, ch.to_upper())
+		if ch >= "A" and ch <= "Z" and (flat == "" or flat[-1] != ch):
+			flat += ch
+	return flat
+
+
+# Ｆｕｌｌｗｉｄｔｈ letters -> normal ones.
+static func _narrow(n: String) -> String:
+	var out := ""
+	for ch in n:
+		var c := ch.unicode_at(0)
+		out += char(c - 0xFEE0) if c >= 0xFF01 and c <= 0xFF5E else ch
+	return out
 
 
 static func name_ok(n: String) -> bool:
-	var flat := ""
-	for ch in n.to_upper():
-		ch = _LOOKALIKE.get(ch, ch)
-		if ch >= "A" and ch <= "Z" and (flat == "" or flat[-1] != ch):   # letters only, no stretching
-			flat += ch
 	var re := RegEx.new()
-	re.compile("DI(CK|C|K)B(UB|U?B?L)")
-	return re.search(flat) == null
+	re.compile("DI(CK|C|K)([UB]+L|BUB)")
+	return re.search(name_reads_as(n)) == null
+
+
+# Only plain keyboard characters and accented Latin letters survive in a shown name:
+# no other alphabets, invisible characters or stacked accent marks.
+static func displayable_name(n: String) -> String:
+	var out := ""
+	for ch in _narrow(n):
+		var c := ch.unicode_at(0)
+		if (c >= 32 and c < 127) or _NAME_EXTRA.find(ch) >= 0:
+			out += ch
+	return out.strip_edges()
 
 
 const NOPE := "No, Bubba! Your NAME, buddy! The thing your mom yells across the yard. Try again!"
@@ -166,7 +198,7 @@ func c_hello(player_name: String, version: int, angel_skills: Array, demon_skill
 	if not is_host:
 		return
 	var id := multiplayer.get_remote_sender_id()
-	if not name_ok(player_name):
+	if not name_ok(player_name) or not name_ok(displayable_name(player_name)):
 		s_kicked.rpc_id(id, NOPE)
 		get_tree().create_timer(0.5).timeout.connect(func():
 			if multiplayer.multiplayer_peer:
@@ -675,7 +707,7 @@ func c_throw(origin: Vector3, velocity: Vector3, kind: String) -> void:
 		return
 	if not Blessings.KINDS.has(kind) or velocity.length() > 45.0:
 		return
-	if origin.distance_to(rec["pos"] + Vector3.UP * 1.3) > 3.0:
+	if not _origin_ok(rec, origin):
 		_note_cheat(id, "throwing from somewhere they aren't")
 		return
 	# Mirror the blessing stamina so a hacked client can't throw endlessly.
@@ -964,7 +996,9 @@ func s_chat(sender: String, sender_role: String, text: String, team_only: bool) 
 
 # Skills start at the player's camera, which can sit ~4 m behind them in third person.
 func _origin_ok(rec: Dictionary, origin: Vector3) -> bool:
-	return origin.distance_to(rec["pos"] + Vector3.UP * 1.3) <= 5.0
+	# Mid-dash a player covers a lot of ground between position updates.
+	var slack := 9.0 if now() < rec.get("dash_until", 0.0) else 5.0
+	return origin.distance_to(rec["pos"] + Vector3.UP * 1.3) <= slack
 
 
 # Is this player allowed to use this skill right now? (Also starts its cooldown.)

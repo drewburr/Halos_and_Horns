@@ -1266,7 +1266,7 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 			# Thrown from the angel's hands; where it ends up is up to physics.
 			_cherub_counter += 1
 			var flat := Vector3(dir.x, 0.0, dir.z).normalized()
-			var pos: Vector3 = user.global_position + Vector3.UP * 1.1 + flat * 0.8
+			var pos: Vector3 = user.global_position + Vector3.UP * 1.1 + flat * 1.2   # clear of the thrower
 			var vel: Vector3 = dir * Skills.CHERUB_THROW_SPEED + Vector3.UP * Skills.CHERUB_THROW_UP
 			_auth_cherubs[_cherub_counter] = {"pos": pos, "until": Time.get_ticks_msec() / 1000.0 + Skills.CHERUB_LIFETIME,
 					"alarmed": false, "rested": false}
@@ -1422,8 +1422,8 @@ func kick_cherub(cid: int, shot_velocity: Vector3) -> void:
 
 # Our own angel standing in demon fire? (Slowed, blessings burn away.)
 func _check_burning() -> void:
-	if role != "angel" or not (state == State.HIDING or state == State.HUNTING):
-		return
+	if role != "angel" or state != State.HUNTING:
+		return   # angels are safe from fire until the hunt starts
 	var me := player.global_position
 	for id in fires.keys():
 		var f = fires[id]

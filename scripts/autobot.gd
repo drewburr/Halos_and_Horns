@@ -238,7 +238,7 @@ func _play_angel(delta: float, p) -> void:
 			_log_once("melee")
 		for slot in 2:
 			var id: String = p.loadout["angel"][slot]
-			if id != "" and id != "leap" and p.use_skill(slot):
+			if id != "" and id != "leap" and not (id == "dash" and p._leaping) and p.use_skill(slot):
 				_log_once(id)
 		if p.try_throw():
 			_misses += 1

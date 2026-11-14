@@ -313,11 +313,11 @@ func _run() -> void:
 	# Banned names (spacing, l33t, look-alike letters...) are refused; normal names aren't.
 	var N = load("res://scripts/net_game.gd")
 	var blocked := true
-	for n in ["Dick Bubble", "D1ck Bubbl3", "d i c k b u b b l e", "Diiick Buuubble", "xXDickBubbleXx", "DickBBLs", "DІck Bubble"]:
+	for n in ["Dick Bubble", "D1ck Bubbl3", "d i c k b u b b l e", "Diiick Buuubble", "xXDickBubbleXx", "DickBBLs", "DІck Bubble", "DičKьŭБBle", "Dícк Bùbblé", "Dick\u200bBubble", "ＤｉｃｋＢｕｂｂｌｅ"]:
 		blocked = blocked and not N.name_ok(n)
 	check(blocked, "banned names are refused, however they're spelled")
 	var allowed := true
-	for n in ["Theo", "Dickens", "Bubbles", "Big Bubble", "Benedict", "Bubba"]:
+	for n in ["Theo", "Dickens", "Bubbles", "Big Bubble", "Benedict", "Bubba", "Müller", "Šárka"]:
 		allowed = allowed and N.name_ok(n)
 	check(allowed, "...but normal names are fine")
 

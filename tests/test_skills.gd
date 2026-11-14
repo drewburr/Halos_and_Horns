@@ -514,7 +514,12 @@ func _run() -> void:
 	player.throw_stamina = player.THROW_STAMINA_MAX
 	await frames(10)
 	var feet: Vector3 = player.global_position
+	main.state = main.State.HIDING
 	main.authority_skill(player, 0, "fire", feet + Vector3(0, 1.5, 6), Vector3(0, -0.24, -0.97), feet, -1)
+	await frames(45)
+	check(player.burning <= 0.0 and player.throw_stamina >= player.THROW_STAMINA_MAX - 1.0,
+			"while the demons are still hiding, Hellfire doesn't hurt angels")
+	main.state = main.State.HUNTING
 	await frames(45)
 	check(player.burning > 0.0, "standing in Hellfire sets an angel burning")
 	check(player.throw_stamina < player.THROW_STAMINA_MAX - 15.0, "...which burns away blessing stamina")
