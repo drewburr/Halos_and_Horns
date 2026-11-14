@@ -46,6 +46,7 @@ void fragment() {
 }
 """
 const HIDE_CHOICES := [15.0, 30.0, 45.0, 60.0, 90.0]
+const IDLE_CHOICES := [0.0, 120.0, 300.0, 600.0]   # kick players who haven't moved or looked around for this long (0 = never)
 const HUNT_CHOICES := [120.0, 180.0, 300.0, 600.0, 900.0, 1800.0]
 const BOT_COUNT := 3
 const PROP_COUNT := 45
@@ -85,6 +86,7 @@ var chat_edit: LineEdit
 var chat_team_only := false
 var _chat_lines := []           # [Label, seconds left on screen]
 var lobby_times: VBoxContainer   # host's round-length pickers
+var _kick_pick: OptionButton     # host: who to kick
 var _time_pick := {}            # picker label -> chosen index
 var heat_rect: ColorRect         # Hellfire screen distortion
 var hold_bar: ColorRect          # "returning to demon form" progress, under the crosshair
@@ -453,6 +455,10 @@ func _send_chat(text: String) -> void:
 	_close_chat()
 	if text == "":
 		return
+	# Host only: "/kick Name" removes someone mid-round.
+	if text.begins_with("/kick ") and net and net.is_host:
+		net.kick_by_name(text.trim_prefix("/kick ").strip_edges(), "The host kicked you.")
+		return
 	if net:
 		net.send_chat(text, chat_team_only)
 
@@ -779,6 +785,18 @@ func _build_lobby() -> void:
 	box.add_child(lobby_times)
 	_time_choice(lobby_times, "Hiding time", HIDE_CHOICES, 1)
 	_time_choice(lobby_times, "Hunting time", HUNT_CHOICES, 2)
+	_time_choice(lobby_times, "Kick idle players", IDLE_CHOICES, 0, func(i): if net: net.idle_limit = IDLE_CHOICES[i])
+	var kick_row := HBoxContainer.new()
+	lobby_times.add_child(kick_row)
+	_kick_pick = OptionButton.new()
+	_kick_pick.custom_minimum_size.x = 200
+	kick_row.add_child(_kick_pick)
+	var kick_btn := Button.new()
+	kick_btn.text = "Kick"
+	kick_btn.pressed.connect(func():
+		if net and _kick_pick.selected >= 0:
+			net.kick_by_name(_kick_pick.get_item_text(_kick_pick.selected), "The host kicked you."))
+	kick_row.add_child(kick_btn)
 	lobby_start = _button(box, "Start round", func():
 		if net:
 			net.hide_time = HIDE_CHOICES[_time_pick["Hiding time"]]
@@ -788,7 +806,7 @@ func _build_lobby() -> void:
 	lobby_panel.visible = false
 
 
-func _time_choice(parent: Control, label_text: String, choices: Array, default_index: int) -> void:
+func _time_choice(parent: Control, label_text: String, choices: Array, default_index: int, on_pick := Callable()) -> void:
 	var row := HBoxContainer.new()
 	var lbl := Label.new()
 	lbl.text = label_text
@@ -796,10 +814,13 @@ func _time_choice(parent: Control, label_text: String, choices: Array, default_i
 	row.add_child(lbl)
 	var ob := OptionButton.new()
 	for secs in choices:
-		ob.add_item("%d:%02d" % [int(secs) / 60, int(secs) % 60])
+		ob.add_item("Off" if secs == 0 else "%d:%02d" % [int(secs) / 60, int(secs) % 60])
 	ob.select(default_index)
 	_time_pick[label_text] = default_index
-	ob.item_selected.connect(func(i): _time_pick[label_text] = i)
+	ob.item_selected.connect(func(i):
+		_time_pick[label_text] = i
+		if on_pick.is_valid():
+			on_pick.call(i))
 	row.add_child(ob)
 	parent.add_child(row)
 
@@ -1109,6 +1130,10 @@ func _phase_to_state(phase: String) -> State:
 
 func online_lobby(names: Array, host_phase: String) -> void:
 	lobby_names = names
+	if _kick_pick and net and net.is_host:
+		_kick_pick.clear()
+		for n in names.slice(1):   # everyone but the host (always first)
+			_kick_pick.add_item(n)
 	if state != State.LOBBY:
 		return   # mid-round: the list updates, the panel stays hidden
 	lobby_players.text = "Players (%d):\n  %s" % [names.size(), "\n  ".join(_lobby_lines(names))]
@@ -1734,6 +1759,8 @@ func _handle_command_line() -> void:
 			net.hide_time = float(args["hide"])
 		if net and args.has("hunt"):
 			net.hunt_time = float(args["hunt"])
+		if net and args.has("idle"):
+			net.idle_limit = float(args["idle"])
 		if net and args.has("roles"):   # e.g. --roles=Theo:demon,Wife:angel
 			for pair in args["roles"].split(","):
 				var kv: PackedStringArray = pair.split(":")
@@ -1903,7 +1930,7 @@ func _build_scoreboard(hud: CanvasLayer) -> void:
 	_scoreboard_footer = Label.new()
 	_scoreboard_footer.add_theme_color_override("font_color", Color(0.75, 0.75, 0.8))
 	outer.add_child(_scoreboard_footer)
-	for team in ["angel", "demon"]:
+	for team in ["demon", "angel"]:   # demons on the left, angels on the right
 		var box := VBoxContainer.new()
 		box.custom_minimum_size.x = 380
 		cols.add_child(box)

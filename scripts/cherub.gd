@@ -106,6 +106,17 @@ func _physics_process(delta: float) -> void:
 	if flat_speed > 0.15:
 		rotation.y = lerp_angle(rotation.y, atan2(velocity.x, velocity.z) + PI, 0.3)
 	move_and_slide()
+	# Never sit on anyone's head: hop off sideways.
+	for i in get_slide_collision_count():
+		var col := get_slide_collision(i)
+		var other := col.get_collider()
+		var is_someone: bool = other != null and (other is CharacterBody3D or other.get("eid") != null or other.is_in_group("demon"))
+		if col.get_normal().y > 0.6 and is_someone:
+			var away := Vector3(global_position.x - other.global_position.x, 0.0, global_position.z - other.global_position.z)
+			if away.length() < 0.05:
+				away = Vector3.RIGHT
+			velocity = away.normalized() * 3.0 + Vector3.DOWN
+			break
 
 
 func _process(delta: float) -> void:

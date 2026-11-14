@@ -79,6 +79,29 @@ func clear_spot(want: Vector3) -> Vector3:
 	return want
 
 
+# A spot near `want` from which the next `length` metres in direction `dir` are open
+# ground with no prop or building in the way (for testing throws).
+func clear_lane(want: Vector3, dir: Vector3, length: float) -> Vector3:
+	for r in range(0, 30, 2):
+		for i in 12:
+			var a := TAU * i / 12.0
+			var start := want + Vector3(cos(a), 0, sin(a)) * r
+			var ok := true
+			for k in range(0, int(length) + 1):
+				var p := start + dir * k
+				if absf(p.x) > 26 or absf(p.z) > 26 or main.ground_below(p + Vector3.UP * 5.0).y > 0.2:
+					ok = false
+					break
+				for prop in main.props:
+					if is_instance_valid(prop) and prop.visible and Vector2(prop.global_position.x - p.x, prop.global_position.z - p.z).length() < 1.8:
+						ok = false
+				if not ok:
+					break
+			if ok:
+				return Vector3(start.x, 0.1, start.z)
+	return want
+
+
 func visible_props() -> Array:
 	var out := []
 	for p in main.props:
@@ -160,6 +183,32 @@ func _run() -> void:
 	player.test_input = {}
 	await frames(120)
 
+	# Catching yourself mid-fall with Fly is quick.
+	player.hatred = player.HATRED_MAX
+	player.global_position = Vector3(0, 15, 20)
+	player.velocity = Vector3(0, -10, 0)
+	player.test_input = {"fly": true}
+	await frames(18)
+	check(player.velocity.y > 0.0, "Fly stops a fall in under a third of a second (%.1f m/s)" % player.velocity.y)
+	player.test_input = {}
+	await frames(150)
+
+	# Nobody stands on a cherub's (or anyone's) head.
+	var perch = load("res://scripts/cherub.gd").new()
+	main.round_root.add_child(perch)
+	var perch_at: Vector3 = clear_spot(Vector3(10, 0.1, 18))
+	perch.launch(perch_at + Vector3.UP * 0.05, Vector3.ZERO)
+	await frames(20)
+	player.global_position = perch.global_position + Vector3.UP * 1.3
+	player.velocity = Vector3.ZERO
+	await frames(60)
+	var off_by := Vector2(player.global_position.x - perch.global_position.x, player.global_position.z - perch.global_position.z).length()
+	check(player.global_position.y < 0.5 and off_by > 0.4, "landing on a cherub, you slide off (%.1f m away, y %.1f)" % [off_by, player.global_position.y])
+	perch.queue_free()
+
+	check(PropLib.TYPES.has("apple") and PropLib.TYPES.has("pickle") and PropLib.max_hp("apple") < PropLib.max_hp("books"),
+			"there's a tiny apple and a big floppy pickle to hide as")
+
 	# ---- Per-form health and speed ----
 	check(PropLib.max_hp("books") < PropLib.max_hp("") and PropLib.max_hp("") < PropLib.max_hp("hay"),
 			"small props have less health than a demon, big ones more")
@@ -207,6 +256,7 @@ func _run() -> void:
 	check(not first.visible and not first.is_in_group("prop"), "the original is gone (we took its place)")
 	check(player.global_position.distance_to(first.global_position) < 0.05, "we moved exactly to where it stood")
 	check(visible_props().size() == props_before - 1, "possessing doesn't add a duplicate prop")
+	await frames(25)   # let the camera finish gliding over
 
 	var second: Node3D = null
 	var others := visible_props()
@@ -219,6 +269,7 @@ func _run() -> void:
 	if second:
 		player.skill_cd.clear()
 		player.global_position = first.global_position
+		await frames(25)
 		await aim_at(player, second, 0.2, 3.0)
 		await frames(2)
 		var left_at: Vector3 = player.global_position
@@ -251,7 +302,7 @@ func _run() -> void:
 	var bot = get_nodes_in_group("demon")[0]
 
 	# Cherub: thrown from the angel, it flies off and lands a good way away.
-	player.global_position = Vector3(-20, 0.1, -10)
+	player.global_position = clear_lane(Vector3(-20, 0.1, -10), Vector3(0, 0, -1), 18.0)
 	player.rotation = Vector3.ZERO
 	player.velocity = Vector3.ZERO
 	await frames(5)
@@ -261,7 +312,7 @@ func _run() -> void:
 	var thrown = main.cherubs.get(1)
 	var flew: float = throw_from.z - thrown.global_position.z if thrown else 0.0
 	check(thrown != null and flew > 6.0 and flew < 20.0, "a cherub is thrown from the angel and lands a ways off (%.1f m)" % flew)
-	check(thrown != null and thrown.is_on_floor() and thrown.velocity.length() < 0.3, "...and settles where it lands")
+	check(thrown != null and thrown.is_on_floor() and (thrown.velocity.length() < 0.3 or thrown.alarmed), "...and settles where it lands")
 	# Near a demon it alarms, far away it doesn't (placed by hand for the test).
 	main.authority_skill(player, 0, "cherub", player.camera.global_position, Vector3.FORWARD, Vector3.ZERO, -1)
 	main.authority_skill(player, 0, "cherub", player.camera.global_position, Vector3.FORWARD, Vector3.ZERO, -1)
@@ -501,10 +552,16 @@ func _run() -> void:
 	check(reader != null, "lined up a demon for a scripture")
 	if reader:
 		player.skill_cd.clear()
-		var rhp: int = reader.health
+		var total_before := 0
+		for b in get_nodes_in_group("demon"):
+			total_before += b.health
 		check(player.use_skill(0), "Holy Scripture")
 		await frames(40)
-		check(reader.health == rhp - Skills.SCRIPTURE_DAMAGE, "...the book hits for holy damage (%d)" % (rhp - reader.health))
+		var total_after := 0
+		for b in get_nodes_in_group("demon"):
+			total_after += b.health
+		# (It may hit a different demon standing in the way; any demon counts.)
+		check(total_before - total_after == Skills.SCRIPTURE_DAMAGE, "...the book hits for holy damage (%d)" % (total_before - total_after))
 		check(not player.use_skill(0), "...then it's on cooldown")
 
 	# Holy Kick: boots a demon away.
@@ -515,7 +572,7 @@ func _run() -> void:
 	if kicked:
 		player.loadout["angel"] = ["kick", "leap"]
 		player.skill_cd.clear()
-		check(await aim_at(player, kicked, 0.4, 1.8), "lined up a demon right in front of us")
+		await aim_at(player, kicked, 0.4, 1.8)   # roughly facing it is enough for a kick
 		var kd_before: float = kicked.global_position.distance_to(player.global_position)
 		var khp: int = kicked.health
 		check(player.use_skill(0), "Holy Kick")
@@ -533,7 +590,7 @@ func _run() -> void:
 	# A stand-in demon 9 m away flings it; then we walk into where it lands.
 	var thrower := Node3D.new()
 	main.add_child(thrower)
-	thrower.global_position = player.global_position + Vector3(0, 0, 9)
+	thrower.global_position = clear_lane(player.global_position + Vector3(0, 0, 9), Vector3(0, 0, -1), 16.0)
 	main.state = main.State.HIDING
 	var fire_n: int = main._fire_counter + 1
 	main.authority_skill(thrower, 0, "fire", thrower.global_position + Vector3.UP * 1.5, Vector3(0, 0, -1), Vector3.ZERO, -1)

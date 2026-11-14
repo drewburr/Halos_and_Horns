@@ -3,7 +3,7 @@
 A free, non-commercial prop-hunt game: demons possess everyday objects to hide, angels hunt them down.
 Passion project, inspired by Witch It.
 
-## Status: version 0.4.2, Redemption
+## Status: version 0.4.3, Redemption
 
 One small test map, placeholder shapes for everything.
 
@@ -42,7 +42,7 @@ Making a release (developers): publish a GitHub release tagged like `v0.4.1`. Th
 
 ## Hosting and joining
 
-**Hosting:** click **Host a game**. The lobby shows the addresses friends should use. Pick the hiding and hunting times, then click **Start round** once at least 2 players are in.
+**Hosting:** click **Host a game**. The lobby shows the addresses friends should use. Pick the hiding and hunting times (and, if you like, a time after which idle players get kicked; you can also kick someone by hand), then click **Start round** once at least 2 players are in.
 - Friends on the same Wi-Fi use the "same house" address. That needs no setup.
 - Friends over the internet use your internet address, which needs **UDP port 7777 forwarded** on your router to your PC. Windows will also ask to allow the game through the firewall: allow it. On Linux, if you run a firewall, allow UDP port 7777 yourself.
 
@@ -74,7 +74,7 @@ Both builds are also made automatically: publishing a release on GitHub runs [th
 | T | First/third person | First/third person |
 | B | Change blessing type (testing) | |
 | G | Swap skills (at the shrine) | Swap skills (at the shrine, in demon form) |
-| Enter / Backspace | Chat to everyone / team chat (online) | Chat to everyone / team chat (online) |
+| Enter / Backspace | Chat to everyone / team chat (online; the host can type /kick Name) | Chat to everyone / team chat (online) |
 | F1 | Movement tuning panel | Movement tuning panel |
 | Esc | Menu | Menu |
 | Tab (hold) | Roster: both teams, ping, skills | Roster: both teams, ping, skills |

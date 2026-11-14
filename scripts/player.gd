@@ -59,7 +59,8 @@ const HATRED_FLY_DRAIN := 22.0    # while flying; minus regen = ~5.5 s of flight
 # Thrust beats gravity, so you keep speeding up toward FLY_MAX_RISE. Jumping first
 # gives a head start; from standing it takes a moment to build speed.
 const FLY_THRUST := 24.0          # m/s² upward (gravity pulls ~13.2 the other way)
-const FLY_MAX_RISE := 11.0        # top climbing speed, m/s
+const FLY_MAX_RISE := 11.0
+const FLY_CATCH_BOOST := 2.6      # thrust multiplier while still falling (stops a fall in a fraction of a second)        # top climbing speed, m/s
 const PULL_SPEED := 24.0          # being yanked by a vacuum orb (much faster than the props)
 
 const TAUNT_COOLDOWN := 0.8
@@ -348,7 +349,10 @@ func _physics_process(delta: float) -> void:
 		if flying:
 			# Thrust up against plain gravity; WASD steers like any other time in the air.
 			var g_fly: float = gravity * tuning["gravity_scale"]
-			velocity.y = minf(velocity.y + (FLY_THRUST - g_fly) * delta, FLY_MAX_RISE)
+			# Already falling? Catch yourself much harder, so the fall stops quickly
+			# (taking off from the ground or a jump feels the same as before).
+			var thrust := FLY_THRUST * (FLY_CATCH_BOOST if velocity.y < 0.0 else 1.0)
+			velocity.y = minf(velocity.y + (thrust - g_fly) * delta, FLY_MAX_RISE)
 			_fall_speed = 0.0
 		elif not on_floor:
 			var g: float = gravity * tuning["gravity_scale"]
@@ -391,6 +395,7 @@ func _physics_process(delta: float) -> void:
 		clear_dash()
 		velocity = Vector3(0.0, -Skills.STOMP_SPEED, 0.0)
 	move_and_slide()
+	_slide_off_heads()
 	current = Vector2(velocity.x, velocity.z)
 	if _momentum != Vector2.ZERO and is_on_wall():
 		# Ran into something: keep only the momentum we're actually still moving with.
@@ -784,6 +789,30 @@ func _shoot() -> void:
 	_throw_cooldown = THROW_COOLDOWN
 	threw.emit(blessing)
 	launched.emit(start, p.velocity, blessing, p.gravity, throw_seq)
+
+
+# No standing on other players' heads (angels, or demons in their own body), or on
+# a cherub: you slide right off. Standing on a demon disguised as a prop is fine,
+# that's just a prop.
+func _slide_off_heads() -> void:
+	for i in get_slide_collision_count():
+		var col := get_slide_collision(i)
+		if col.get_normal().y < 0.6:
+			continue
+		var other := col.get_collider()
+		if other == null:
+			continue
+		var on_body: bool = other.get("eid") != null and other.get("form") == ""
+		if on_body or other.get("cherub_id") != null:
+			var away := Vector3(global_position.x - other.global_position.x, 0.0, global_position.z - other.global_position.z)
+			if away.length() < 0.05:
+				away = -global_transform.basis.z
+			away = away.normalized()
+			velocity.x = away.x * 4.0
+			velocity.z = away.z * 4.0
+			velocity.y = minf(velocity.y, -1.0)
+			global_position += away * 0.06
+			return
 
 
 # Which way our body or prop faces, as everyone else should see it.

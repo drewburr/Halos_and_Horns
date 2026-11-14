@@ -250,6 +250,49 @@ func _client_ids() -> Array:
 	return ids
 
 
+# ---------------- kicking ----------------
+
+var idle_limit := 0.0   # seconds without moving or looking around before the host kicks you (0 = never)
+
+
+func kick_by_name(player_name: String, reason: String) -> void:
+	for id in peers:
+		if id != 1 and peers[id]["name"].to_lower() == player_name.to_lower():
+			kick(id, reason)
+			return
+
+
+func kick(id: int, reason: String) -> void:
+	if not is_host or id == 1 or not peers.has(id):
+		return
+	print("[host] kicked %s: %s" % [peers[id]["name"], reason])
+	var news := "%s was kicked." % peers[id]["name"]
+	main.announce(news)
+	for other in _client_ids():
+		if other != id:
+			s_announce.rpc_id(other, news)
+	s_kicked.rpc_id(id, reason)
+	get_tree().create_timer(0.5).timeout.connect(func():
+		if multiplayer.multiplayer_peer and id in multiplayer.get_peers():
+			multiplayer.multiplayer_peer.disconnect_peer(id))
+
+
+func _mark_active(id: int) -> void:
+	if peers.has(id):
+		peers[id]["active_at"] = now()
+
+
+func _check_idle() -> void:
+	if idle_limit <= 0.0 or not (phase == "hiding" or phase == "hunting"):
+		return
+	var t := now()
+	for id in _client_ids():
+		var rec: Dictionary = peers[id]
+		if rec["in_round"] and t - rec.get("active_at", t) > idle_limit:
+			rec["active_at"] = t
+			kick(id, "You were kicked for being idle (no moving or looking around for a while).")
+
+
 func _broadcast_lobby() -> void:
 	var names := []
 	for id in peers:
@@ -317,6 +360,7 @@ func _reset_round_mirrors(rec: Dictionary) -> void:
 	rec["air_time"] = 0.0
 	rec["skill_ready"] = {}
 	rec["melee_ready"] = 0.0
+	rec["active_at"] = now()
 	rec["dash_until"] = 0.0
 	rec["locked_until"] = 0.0
 
@@ -485,6 +529,7 @@ func _host_tick(delta: float) -> void:
 				_end_round("Time's up! %d demon%s survived. Demons win!" % [n, "" if n == 1 else "s"])
 			elif phase == "ended":
 				_back_to_lobby()
+	_check_idle()
 	# Host's own player into the shared state.
 	var me: Dictionary = peers[1]
 	if me["in_round"]:
@@ -625,6 +670,8 @@ func c_state(pos: Vector3, yaw: float, form: String, flying: bool) -> void:
 		_note_cheat(id, "flying without the Fly skill")
 		_drop_to_ground(id, rec, pos)
 		return
+	if pos.distance_to(rec["pos"]) > 0.05 or absf(wrapf(yaw - rec["yaw"], -PI, PI)) > 0.02:
+		_mark_active(id)
 	rec["pos"] = pos
 	_record_history(id, pos)
 	rec["valid_pos"] = pos
@@ -1032,6 +1079,7 @@ func c_taunt(taunt_name: String) -> void:
 		return
 	var rec: Dictionary = peers[id]
 	var t := now()
+	_mark_active(id)
 	if t - rec["last_taunt"] < 0.5 or not _valid_taunt(rec["role"], taunt_name):
 		return
 	rec["last_taunt"] = t
@@ -1145,6 +1193,7 @@ func c_chat(text: String, team_only: bool) -> void:
 func _relay_chat(id: int, text: String, team_only: bool) -> void:
 	if not peers.has(id):
 		return
+	_mark_active(id)
 	var rec: Dictionary = peers[id]
 	var t := now()
 	if t < rec.get("chat_ready", 0.0):

@@ -15,6 +15,8 @@ const TYPES := {
 	"bench": {"shape": "box", "size": Vector3(1.6, 0.5, 0.5), "label": "Bench", "hp": 120, "speed": 5.0},
 	"books": {"shape": "box", "size": Vector3(0.45, 0.35, 0.3), "label": "Stack of books", "hp": 50, "speed": 7.5},
 	"hay": {"shape": "box", "size": Vector3(1.2, 0.8, 0.8), "label": "Hay bale", "hp": 150, "speed": 4.5},
+	"apple": {"shape": "box", "size": Vector3(0.26, 0.28, 0.26), "label": "Apple", "hp": 30, "speed": 8.0},
+	"pickle": {"shape": "box", "size": Vector3(0.5, 0.42, 1.5), "label": "Big floppy pickle", "hp": 90, "speed": 5.5},
 }
 
 const DEMON_FORM_HP := 100
@@ -122,4 +124,27 @@ static func make_visual(type_name: String) -> Node3D:
 			_add_mesh(root, _box(Vector3(0.42, 0.1, 0.29)), Color(0.2, 0.5, 0.25), Vector3(-0.01, 0.28, 0))
 		"hay":
 			_add_mesh(root, _box(Vector3(1.2, 0.8, 0.8)), Color(0.9, 0.8, 0.35), Vector3(0, 0.4, 0))
+		"apple":
+			var a := SphereMesh.new()
+			a.radius = 0.13
+			a.height = 0.24
+			_add_mesh(root, a, Color(0.8, 0.08, 0.1), Vector3(0, 0.12, 0))
+			_add_mesh(root, _cyl(0.008, 0.012, 0.06), Color(0.35, 0.22, 0.1), Vector3(0, 0.26, 0))
+			var leaf := _add_mesh(root, _box(Vector3(0.07, 0.01, 0.035)), Color(0.25, 0.6, 0.2), Vector3(0.035, 0.265, 0))
+			leaf.rotation.z = 0.4
+		"pickle":
+			# A big, floppy pickle lying on its side: three segments that sag in the
+			# middle, with a few warty bumps.
+			var green := Color(0.35, 0.5, 0.15)
+			for i in 3:
+				var seg := CapsuleMesh.new()
+				seg.radius = 0.2
+				seg.height = 0.75
+				var mi := _add_mesh(root, seg, green, Vector3(0, 0.2 - (0.05 if i == 1 else 0.0), (i - 1) * 0.42))
+				mi.rotation.x = PI / 2 + (i - 1) * 0.18
+			for b in [Vector3(0.17, 0.3, -0.3), Vector3(-0.16, 0.28, 0.1), Vector3(0.12, 0.33, 0.45), Vector3(-0.1, 0.34, -0.55)]:
+				var bump := SphereMesh.new()
+				bump.radius = 0.045
+				bump.height = 0.09
+				_add_mesh(root, bump, Color(0.45, 0.6, 0.2), b)
 	return root
