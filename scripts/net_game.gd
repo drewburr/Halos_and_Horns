@@ -32,7 +32,8 @@ const THROW_COST := 7.0
 const THROW_STAMINA_MAX := 100.0
 const THROW_REGEN := 30.0
 const SCOREBOARD_RATE := 1.0     # roster (Tab) updates per second
-const GRAPPLE_MOVE_SPEED := 26.0  # allowed speed for a moment after a grapple the host approved
+const DASH_MOVE_SPEED := 46.0     # allowed speed for a while after a dash the host approved (covers the F1 sliders' top end)
+const DASH_WINDOW := 4.0          # seconds that allowance lasts: the burst, then the momentum fading out
 const HATRED_REGEN := 4.0         # must match player.gd (mirrored to catch fly hacks)
 const HATRED_FLY_DRAIN := 22.0
 const HATRED_MAX_MIRROR := 100.0
@@ -108,7 +109,7 @@ func _new_record(player_name: String) -> Dictionary:
 		"stamina": THROW_STAMINA_MAX, "stamina_time": now(), "last_taunt": 0.0,
 		"throws": 0, "hits": 0, "redeemed": false,
 		"loadout": Skills.DEFAULTS.duplicate(true), "skill_ready": {}, "melee_ready": 0.0,
-		"hatred": 0.0, "air_time": 0.0, "grapple_until": 0.0, "locked_until": 0.0, "hp": 1.0,
+		"hatred": 0.0, "air_time": 0.0, "dash_until": 0.0, "locked_until": 0.0, "hp": 1.0,
 	}
 
 
@@ -283,7 +284,7 @@ func _reset_round_mirrors(rec: Dictionary) -> void:
 	rec["air_time"] = 0.0
 	rec["skill_ready"] = {}
 	rec["melee_ready"] = 0.0
-	rec["grapple_until"] = 0.0
+	rec["dash_until"] = 0.0
 	rec["locked_until"] = 0.0
 
 
@@ -565,7 +566,7 @@ func c_state(pos: Vector3, yaw: float, form: String, flying: bool) -> void:
 	if not _in_bounds(pos):
 		problem = "out of bounds"
 	else:
-		var max_speed := GRAPPLE_MOVE_SPEED if t < rec["grapple_until"] else MAX_MOVE_SPEED
+		var max_speed := DASH_MOVE_SPEED if t < rec["dash_until"] else MAX_MOVE_SPEED
 		if flat > max_speed * dt + 1.5:
 			problem = "moving too fast (%.1f m in %.2f s, from %s to %s)" % [flat, dt, _short(rec["valid_pos"]), _short(pos)]
 	if problem != "":
@@ -598,7 +599,7 @@ func c_state(pos: Vector3, yaw: float, form: String, flying: bool) -> void:
 
 # Fly hacks. The host keeps its own copy of each demon's Hatred: flying longer
 # than their Hatred allows gets them dropped to the ground. And anyone hanging in
-# the air for a while without flying (or a grapple / pull the host approved) too.
+# the air for a while without flying (or a dash / pull the host approved) too.
 func _check_flight(id: int, rec: Dictionary, pos: Vector3, flying: bool, dt: float, t: float) -> void:
 	if rec["role"] == "demon":
 		rec["hatred"] = clampf(rec["hatred"] + HATRED_REGEN * dt - (HATRED_FLY_DRAIN * dt if flying else 0.0), -50.0, 100.0)
@@ -607,7 +608,7 @@ func _check_flight(id: int, rec: Dictionary, pos: Vector3, flying: bool, dt: flo
 			_note_cheat(id, "flying without enough Hatred")
 			_drop_to_ground(id, rec, pos)
 			return
-	var excused: bool = flying or t < rec["grace_until"] or t < rec["grapple_until"]
+	var excused: bool = flying or t < rec["grace_until"] or t < rec["dash_until"]
 	if excused or _has_ground_below(pos, remotes.get(rec["eid"])):
 		rec["air_time"] = 0.0
 		return
@@ -1077,9 +1078,9 @@ func c_release() -> void:
 		main.authority_release(id, peers[id]["pos"], peers[id]["yaw"])
 
 
-func grant_grapple(id: int) -> void:
+func grant_dash(id: int) -> void:
 	if peers.has(id):
-		peers[id]["grapple_until"] = now() + Skills.GRAPPLE_RANGE / Skills.GRAPPLE_SPEED + 0.6
+		peers[id]["dash_until"] = now() + DASH_WINDOW
 
 
 # Every demon in the round, as bodies the host can measure and hit.
@@ -1096,7 +1097,7 @@ func demon_nodes() -> Array:
 	return out
 
 
-# Pull a demon somewhere (vacuum, grappling hook), drain Hatred, lock skills.
+# Pull a demon somewhere (vacuum, kick), drain Hatred, lock skills.
 func affect_node(node: Node3D, target: Vector3, hatred_drain: float, lockout: float, label: String) -> void:
 	var id := 1 if node == main.player else (_peer_for_eid(node.eid) if node is RemotePlayer else 0)
 	if id == 0 or not peers.has(id):

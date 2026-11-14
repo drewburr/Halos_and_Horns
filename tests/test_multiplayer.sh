@@ -17,7 +17,7 @@ for n in Wife Brother Squirrel Oddy; do
 	extra=""
 	[ "$n" = "Oddy" ] && extra="--cheat=teleport,fly"
 	[ "$n" = "Wife" ] && extra="--skills=cherub,vacuum --say=hello_everyone"
-	[ "$n" = "Squirrel" ] && extra="--skills=grapple,leap"
+	[ "$n" = "Squirrel" ] && extra="--skills=dash,leap"
 	[ "$n" = "Brother" ] && extra="--skills=fire,fly --sayteam=demons_only_secret"
 	timeout 240 "$GODOT" --headless -- --join=127.0.0.1 --name=$n --autobot --quit-after-round $extra > "$OUT/$n.log" 2>&1 &
 	sleep 0.5
@@ -43,7 +43,7 @@ check "demons flew" "grep -q 'flying' '$OUT/Brother.log'"
 check "a demon possessed a real prop" "grep -q 'a demon possessed a' '$OUT/host.log'"
 check "an angel dropped an Alarm Cherub" "grep -q 'cherub dropped' '$OUT/host.log'"
 check "an angel threw a Vacuum Orb" "grep -q 'vacuum orb' '$OUT/host.log'"
-check "an angel fired a grappling hook" "grep -q 'used grapple' '$OUT/Squirrel.log'"
+check "an angel used the Flying Dash" "grep -q 'used dash' '$OUT/Squirrel.log'"
 check "a demon flung Hellfire" "grep -q 'hellfire lit' '$OUT/host.log'"
 check "an angel Holy Leaped and Cloud Stomped" "grep -q 'cloud stomp hit' '$OUT/host.log'"
 check "the roster shows chosen skills" "grep -q 'Wife(angel,[0-9]*ms,Alarm Cherub+Vacuum Orb)' '$OUT/Brother.log'"

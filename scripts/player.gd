@@ -58,7 +58,7 @@ const HATRED_FLY_DRAIN := 22.0    # while flying; minus regen = ~5.5 s of flight
 # gives a head start; from standing it takes a moment to build speed.
 const FLY_THRUST := 24.0          # m/s² upward (gravity pulls ~13.2 the other way)
 const FLY_MAX_RISE := 11.0        # top climbing speed, m/s
-const PULL_SPEED := 24.0          # being yanked by a vacuum or grappling hook (much faster than the props)
+const PULL_SPEED := 24.0          # being yanked by a vacuum orb (much faster than the props)
 
 const TAUNT_COOLDOWN := 0.8
 
@@ -71,6 +71,14 @@ var tuning := {
 	"fall_multiplier": 1.5,  # extra gravity on the way down
 	"jump_velocity": 5.6,
 	"head_bob": 1.0,         # 0 = off
+	# Flying Dash (see _dash_step and _update_dash_momentum)
+	"dash_speed": 18.0,        # m/s during the burst
+	"dash_time": 0.25,         # seconds the burst lasts (speed x time = distance)
+	"dash_carry": 0.75,        # share of the burst speed you keep as momentum afterwards
+	"dash_ground_drag": 9.0,   # m/s of momentum lost per second on the ground
+	"dash_air_drag": 2.0,      # ...and in the air
+	"dash_turn_loss": 0.15,    # share of the momentum a slow, wide 180 costs
+	"dash_sharp_turn": 360.0,  # turning this fast (deg/s) or faster costs the most: a 180 kills it all
 }
 
 var role := "demon"           # "angel" or "demon"
@@ -114,8 +122,11 @@ var _bob_offset := 0.0
 var _land_dip := 0.0
 var _was_on_floor := true
 var _fall_speed := 0.0
-var _grapple_target := Vector3.ZERO
-var _grapple_time := 0.0
+var _dash_time := 0.0          # seconds left of the dash burst
+var _dash_dir := Vector3.ZERO  # where the burst is going (any direction, up and down too)
+var _momentum := Vector2.ZERO  # sideways speed left over from a dash, on top of walking
+var _momentum_ref := 0.0       # how much momentum the dash gave us (turn costs are a share of this)
+var _steer_local := Vector2.ZERO   # last direction steered, relative to where we face
 var _pull_target := Vector3.ZERO
 var _pull_time := 0.0
 var burning := 0.0            # seconds left standing in demon fire (main refreshes it)
@@ -177,7 +188,7 @@ func set_role(new_role: String) -> void:
 	skill_lock = 0.0
 	skill_cd.clear()
 	melee_cd = 0.0
-	_grapple_time = 0.0
+	clear_dash()
 	_pull_time = 0.0
 	burning = 0.0
 	_leaping = false
@@ -316,12 +327,13 @@ func _physics_process(delta: float) -> void:
 	else:
 		flying = false
 
-	var current := Vector2(velocity.x, velocity.z)
+	# Walking speed is everything except the dash momentum riding on top of it.
+	var current := Vector2(velocity.x, velocity.z) - _momentum
 	if _pull_time > 0.0:
 		_pull_step(delta)
 		running = false
-	elif _grapple_time > 0.0:
-		_grapple_step(delta, want_jump)
+	elif _dash_time > 0.0:
+		_dash_step(delta)
 		running = false
 	else:
 		if flying:
@@ -363,12 +375,18 @@ func _physics_process(delta: float) -> void:
 		else:
 			rate = tuning["ground_accel"]
 		current = current.move_toward(target, rate * delta)
-		velocity.x = current.x
-		velocity.z = current.y
+		_update_dash_momentum(delta, input_dir, on_floor)
+		velocity.x = current.x + _momentum.x
+		velocity.z = current.y + _momentum.y
 	if _stomping:
+		clear_dash()
 		velocity = Vector3(0.0, -Skills.STOMP_SPEED, 0.0)
 	move_and_slide()
 	current = Vector2(velocity.x, velocity.z)
+	if _momentum != Vector2.ZERO and is_on_wall():
+		# Ran into something: keep only the momentum we're actually still moving with.
+		var heading := _momentum.normalized()
+		_momentum = heading * clampf(current.dot(heading), 0.0, _momentum.length())
 	if is_on_floor() and (_leaping or _stomping) and velocity.y <= 0.0:
 		if _stomping:
 			# Cloud Stomp landed: the host / practice game decides who it hurts.
@@ -410,21 +428,53 @@ func _hold_key_down(id: String) -> bool:
 			or (lo[1] == id and Input.is_action_pressed("rmb"))
 
 
-# Zipping toward a grappling hook. Jump lets go early (with a hop).
-func _grapple_step(delta: float, jump: bool) -> void:
-	_grapple_time -= delta
-	var to := _grapple_target - global_position
-	if to.length() < 1.3 or jump:
-		_grapple_time = 0.0
-		# Arriving: a little hop up and forward, so hooking the top edge of a wall
-		# carries you up over it onto the roof (that's how you climb with it).
-		var flat := Vector3(velocity.x, 0.0, velocity.z).normalized()
-		velocity = flat * 4.0 + Vector3.UP * 7.5
+# The dash burst: a straight line at full speed, whichever way it was aimed.
+# Gravity waits until it's over. What's left afterwards is momentum.
+func _dash_step(delta: float) -> void:
+	_dash_time -= delta
+	velocity = _dash_dir * tuning["dash_speed"]
+	if _dash_time > 0.0:
 		return
-	velocity = to.normalized() * Skills.GRAPPLE_SPEED
+	var carry: float = tuning["dash_carry"]
+	_momentum = Vector2(velocity.x, velocity.z) * carry
+	_momentum_ref = _momentum.length()
+	velocity.y *= carry
+	# The walking part starts from nothing: all the sideways speed is momentum now.
+	velocity.x = _momentum.x
+	velocity.z = _momentum.y
+	var local := global_transform.basis.inverse() * Vector3(_momentum.x, 0.0, _momentum.y)
+	_steer_local = Vector2(local.x, local.z).normalized()
 
 
-# Being yanked somewhere by the angels (vacuum orb, grappling hook).
+# Dash momentum follows where you steer (the keys you hold, turned by where you
+# face), and steering is what costs it. Every bit of turning takes a share of the
+# momentum the dash gave you: turned slowly, a full 180 costs only dash_turn_loss
+# of it; at dash_sharp_turn degrees per second or faster a 180 costs all of it.
+# Swapping keys (strafing) is an instant turn, so it always costs the most.
+func _update_dash_momentum(delta: float, input_dir: Vector2, on_floor: bool) -> void:
+	var speed := _momentum.length()
+	if speed <= 0.0:
+		return
+	if input_dir != Vector2.ZERO:
+		_steer_local = input_dir.normalized()
+	var steer3 := global_transform.basis * Vector3(_steer_local.x, 0.0, _steer_local.y)
+	var steer := Vector2(steer3.x, steer3.z).normalized()
+	var turned := absf(_momentum.angle_to(steer))
+	if turned > 0.0001:
+		var sharp := deg_to_rad(maxf(tuning["dash_sharp_turn"], 1.0))
+		var cost := lerpf(tuning["dash_turn_loss"], 1.0, clampf(turned / delta / sharp, 0.0, 1.0))
+		speed -= _momentum_ref * cost * turned / PI
+	speed -= (tuning["dash_ground_drag"] if on_floor else tuning["dash_air_drag"]) * delta
+	_momentum = steer * speed if speed > 0.1 else Vector2.ZERO
+
+
+# Stop any dash and drop its momentum (caught, yanked, moved by the host...).
+func clear_dash() -> void:
+	_dash_time = 0.0
+	_momentum = Vector2.ZERO
+
+
+# Being yanked somewhere by the angels (vacuum orb).
 func _pull_step(delta: float) -> void:
 	_pull_time -= delta
 	var to := _pull_target - global_position
@@ -439,15 +489,20 @@ func _pull_step(delta: float) -> void:
 func pull_to(target: Vector3, seconds := 1.0) -> void:
 	_pull_target = target
 	_pull_time = seconds
-	_grapple_time = 0.0
+	clear_dash()
 
 
-func is_grappling() -> bool:
-	return _grapple_time > 0.0
+func is_dashing() -> bool:
+	return _dash_time > 0.0
+
+
+# Sideways speed still left over from a dash.
+func dash_momentum() -> float:
+	return _momentum.length()
 
 
 # Q (slot 0), and right mouse (angels) or F (demons) for slot 1.
-# Only the parts that must feel instant happen here (zipping, leaping);
+# Only the parts that must feel instant happen here (dashing, leaping);
 # everything else is decided by the host / practice game via skill_used.
 func use_skill(slot: int) -> bool:
 	var id: String = loadout[role][slot]
@@ -471,16 +526,20 @@ func use_skill(slot: int) -> bool:
 				return false
 			index = _hover_prop.get_meta("prop_index")
 			point = _hover_prop.global_position
-		"grapple":
-			var hit := _aim_ray(Skills.GRAPPLE_RANGE)
-			if hit.is_empty():
+		"dash":
+			if _stomping or _pull_time > 0.0:
 				return false
-			point = hit["position"]
-			if not hit["collider"].has_method("take_hit"):
-				# Hooked the world or a plain prop: zip there.
-				_grapple_target = point - dir * 0.5
-				_grapple_time = global_position.distance_to(_grapple_target) / Skills.GRAPPLE_SPEED + 0.3
-				_pull_time = 0.0
+			# Any direction: where you're looking (up and down too), or the way the
+			# movement keys point relative to that - back to dash backwards, and so on.
+			var aim := camera.global_transform.basis
+			var want := aim * Vector3(_move_dir.x, 0.0, _move_dir.y)
+			_dash_dir = want.normalized() if want.length() > 0.1 else dir
+			_dash_time = tuning["dash_time"]
+			_momentum = Vector2.ZERO
+			_leaping = false
+			_fall_speed = 0.0
+			dir = _dash_dir
+			point = global_position + _dash_dir * tuning["dash_speed"] * tuning["dash_time"]
 		"vacuum":
 			point = origin + dir
 		"leap":

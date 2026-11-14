@@ -19,7 +19,6 @@ const Fire = preload("res://scripts/fire.gd")
 const Shrine = preload("res://scripts/shrine.gd")
 const SHRINE_POS := Vector3(-20, 0, 4)   # the one shrine on this map
 const Vortex = preload("res://scripts/vortex.gd")
-const Rope = preload("res://scripts/rope.gd")
 const Projectile = preload("res://scripts/projectile.gd")
 
 const GAME_VERSION := "0.4.1 (shrine, chat, kick, scriptures)"
@@ -125,6 +124,13 @@ const TUNING_SLIDERS := [
 	["fall_multiplier", "Extra fall speed", 1.0, 3.0, 0.05],
 	["jump_velocity", "Jump strength", 3.0, 9.0, 0.1],
 	["head_bob", "Head bob (0 = off)", 0.0, 2.0, 0.05],
+	["dash_speed", "Dash: speed", 8.0, 35.0, 0.5],
+	["dash_time", "Dash: length (seconds)", 0.1, 0.6, 0.01],
+	["dash_carry", "Dash: momentum kept after", 0.0, 1.0, 0.05],
+	["dash_ground_drag", "Dash: momentum fade on ground", 0.0, 40.0, 0.5],
+	["dash_air_drag", "Dash: momentum fade in air", 0.0, 40.0, 0.5],
+	["dash_turn_loss", "Dash: momentum lost in a slow 180", 0.0, 1.0, 0.05],
+	["dash_sharp_turn", "Dash: turn speed that kills it (deg/s)", 60.0, 1080.0, 10.0],
 ]
 
 
@@ -495,7 +501,7 @@ func _build_map() -> void:
 	_add_block(Vector3(MAP_HALF + 1, 2, 0), Vector3(1, 4, span), wall_color, Vector3.ZERO, false)
 	_add_block(Vector3(-MAP_HALF - 1, 2, 0), Vector3(1, 4, span), wall_color, Vector3.ZERO, false)
 	# Invisible walls above the visible ones, and a ceiling, so flying demons
-	# (and grappling angels) can't leave the map.
+	# (and dashing angels) can't leave the map.
 	_add_invisible(Vector3(0, 17, MAP_HALF + 1), Vector3(span, 26, 1))
 	_add_invisible(Vector3(0, 17, -MAP_HALF - 1), Vector3(span, 26, 1))
 	_add_invisible(Vector3(MAP_HALF + 1, 17, 0), Vector3(1, 26, span))
@@ -517,7 +523,8 @@ func _build_map() -> void:
 	_add_block(Vector3(-6, 0.8, 7.3), Vector3(2.5, 0.4, 5.9), Color(0.5, 0.45, 0.4), Vector3(-0.35, 0, 0))   # top edge flush with the platform
 
 
-const WORLD_LAYER := 1         # everything real you can see, hit and hook
+const DASH_TRAIL := 4.5          # length of the sparkle trail others see behind a dash
+const WORLD_LAYER := 1         # everything real you can see and hit
 const BOUNDS_LAYER := 2        # invisible map walls and ceiling
 const CEILING := 24.0
 
@@ -530,8 +537,8 @@ func _add_invisible(center: Vector3, size: Vector3) -> void:
 	shape_node.shape = box
 	body.add_child(shape_node)
 	body.position = center
-	# Its own layer: it stops bodies (players, cherubs) but aim rays, hooks and
-	# throws go right through, so you can't hook the sky.
+	# Its own layer: it stops bodies (players, cherubs) but aim rays and
+	# throws go right through.
 	body.collision_layer = BOUNDS_LAYER
 	body.collision_mask = 0
 	add_child(body)
@@ -1124,7 +1131,7 @@ func online_you_hit(health_fraction: float) -> void:
 	_hurt_time = 0.25
 
 
-# The angels yanked us (vacuum orb or grappling hook).
+# The angels yanked us (vacuum orb, kick).
 func online_affected(target: Vector3, hatred_drain: float, lockout: float, label: String) -> void:
 	player.pull_to(target, 1.0)
 	player.hatred = maxf(player.hatred - hatred_drain, 0.0)
@@ -1172,6 +1179,7 @@ func online_back_to_lobby() -> void:
 func online_correct(pos: Vector3) -> void:
 	player.global_position = pos
 	player.velocity = Vector3.ZERO
+	player.clear_dash()
 
 
 func online_disconnected(message: String) -> void:
@@ -1198,12 +1206,6 @@ func is_authority() -> bool:
 
 
 func _on_player_skill(id: String, origin: Vector3, dir: Vector3, point: Vector3, index: int) -> void:
-	if id == "grapple":
-		var rope := Rope.new()          # instant, and it follows us while we zip
-		rope.from_node = player
-		rope.to_pos = point
-		rope.duration = 0.25 if not player.is_grappling() else 1.2
-		_fx_parent().add_child(rope)
 	if mode == "practice":
 		authority_skill(player, 0, id, origin, dir, point, index)
 	elif net:
@@ -1309,19 +1311,13 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 			orb.shooter = user
 			orb.on_impact = _vacuum_at
 			broadcast_fx("orb", [origin, dir], user_key)
-		"grapple":
-			var hit := _ray(origin, origin + dir * Skills.GRAPPLE_RANGE, [user])
-			if hit.is_empty():
-				return
-			var c = hit["collider"]
-			broadcast_fx("rope", [user.global_position + Vector3.UP * 1.2, hit["position"], 0.5], user_key)
-			if c.has_method("take_hit") and c.take_hit(Skills.GRAPPLE_DAMAGE):
-				user.confirm_hit()
-				var flat := Vector3(dir.x, 0.0, dir.z).normalized()
-				_affect_demon(c, user.global_position + flat * 1.5, 0.0, 0.0, "HOOKED!")
-				print("[decider] grappling hook snagged a demon")
-			elif net and user_key > 1:
-				net.grant_grapple(user_key)   # they may zip fast for a moment
+		"dash":
+			# The dash itself happens on the dasher's own screen; everyone gets the trail.
+			var start := user.global_position + Vector3.UP * 0.5
+			broadcast_fx("sparkle", [start, start + dir.normalized() * DASH_TRAIL])
+			if net and user_key > 1:
+				net.grant_dash(user_key)   # they may move fast for a moment
+			print("[decider] flying dash")
 		"possess":
 			_authority_possess(user, user_key, index)
 
@@ -1490,12 +1486,12 @@ func _check_cherubs(delta: float) -> void:
 # ---------- effects everyone sees ----------
 
 # Show an effect here and on everyone else's screen. `except_key` is the player
-# who caused it: they already drew their own rope / orb, so they don't get a copy.
+# who caused it: they already drew their own orb, so they don't get a copy.
 func broadcast_fx(kind: String, args: Array, except_key := -1) -> void:
 	var we_caused_it := except_key == 0 or except_key == 1   # practice player or the host
 	# Orbs and books: the decider's own real projectile is already flying here.
 	var real_one_here := kind == "orb" or kind == "scripture"
-	if not real_one_here and not (we_caused_it and kind == "rope"):
+	if not real_one_here:
 		fx(kind, args)
 	if net and net.is_host:
 		net.send_fx(kind, args, except_key)
@@ -1547,12 +1543,6 @@ func fx(kind: String, args: Array) -> void:
 			_fx_parent().add_child(v)
 			v.global_position = args[0]
 			_pull_props(args[0])
-		"rope":
-			var r := Rope.new()
-			r.from_pos = args[0]
-			r.to_pos = args[1]
-			r.duration = args[2]
-			_fx_parent().add_child(r)
 		"sparkle":
 			Effects.sparkle_trail(_fx_parent(), args[0], args[1])
 		"prop_taken":
