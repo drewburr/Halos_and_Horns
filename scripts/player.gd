@@ -6,8 +6,8 @@ signal hit_confirmed   # one of our throws hit a demon
 signal threw(kind)     # we threw a blessed projectile of this kind
 signal form_changed    # we possessed a prop or returned to demon form
 signal taunted(taunt_name)
-signal launched(origin, velocity, kind)   # a throw left our hand (multiplayer forwards it)
-signal hit_taken(damage)                  # a counted hit on us as a demon (host decides)
+signal launched(origin, velocity, kind, gravity, seq)   # a throw left our hand (multiplayer forwards it)
+signal hit_taken(damage, by)              # a counted hit on us as a demon (host decides); by = who
 signal skill_used(skill_id, origin, dir, point, index)   # main decides what actually happens
 signal melee_used(origin, dir)
 signal released_possessed                 # we left a real (possessed) prop behind
@@ -24,7 +24,9 @@ const Skills = preload("res://scripts/skills.gd")
 const ANGEL_SPEED := 6.0
 const DEMON_SPEED := 6.5
 const MOUSE_SENSITIVITY := 0.0025
-const PROJECTILE_SPEED := 40.0
+const PROJECTILE_SPEED := 80.0
+const PROJECTILE_GRAVITY := 4.0
+const WEAK_THROW_BELOW := 0.25    # under 25% blessing stamina, throws get slower and droop more
 const POSSESS_REACH := 6.0        # how far past the camera a demon can possess
 const THIRD_PERSON_DISTANCE := 3.5
 const HOLD_TO_RETURN := 0.6       # seconds to hold left click to leave a prop
@@ -108,6 +110,7 @@ var test_input := {}          # automated tests only: {"dir": Vector2, "sneak", 
 
 var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
 var _throw_cooldown := 0.0
+var _throw_strength := 1.0
 var _throw_regen_wait := 0.0
 var _sprint_regen_wait := 0.0
 var _sprint_exhausted := false
@@ -199,6 +202,7 @@ func set_role(new_role: String) -> void:
 func _apply_form() -> void:
 	for child in visual_root.get_children():
 		child.queue_free()
+	visual_root.rotation.y = 0.0
 	if possessed_type != "":
 		visual_root.add_child(PropLib.make_visual(possessed_type))
 		shape_node.shape = PropLib.make_shape(possessed_type)
@@ -315,6 +319,11 @@ func _physics_process(delta: float) -> void:
 		want_run = Input.is_action_pressed("run")
 		want_jump = Input.is_action_just_pressed("jump")
 		want_fly = _hold_key_down("fly")
+	if burning > 0.0 and input_dir != Vector2.ZERO:
+		# On fire: flailing about trying to cool off, you can't walk a straight line.
+		var tt := Time.get_ticks_msec() / 1000.0
+		var lurch := Vector2(1.3 * sin(tt * 2.1) + 0.6 * sin(tt * 7.3 + 1.3), 0.6 * sin(tt * 4.3 + 2.0))
+		input_dir = (input_dir + lurch).limit_length(1.0)
 	_move_dir = input_dir
 
 	# Hatred always refills; flying spends it faster than it refills (unless boosted).
@@ -559,8 +568,6 @@ func use_skill(slot: int) -> bool:
 			origin = pivot.global_position     # reach is measured from us, not the camera
 			Effects.swing(get_parent(), origin - Vector3.UP * 0.8, dir)
 		"fire":
-			var hit := _aim_ray(Skills.FIRE_RANGE)
-			point = hit["position"] if not hit.is_empty() else origin + dir * Skills.FIRE_RANGE
 			hatred -= Skills.hatred_cost(id)
 	skill_cd[id] = Skills.cooldown(id)
 	skill_used.emit(id, origin, dir, point, index)
@@ -583,10 +590,17 @@ func melee() -> bool:
 func become_possessed(type_name: String, pos: Vector3, yaw: float, index: int) -> void:
 	possessed_index = index
 	possessed_type = type_name
+	var cam_from := pivot.global_position
 	global_position = pos
-	rotation.y = yaw
 	velocity = Vector3.ZERO
 	_apply_form()
+	# Keep looking where we were looking; only the prop keeps its own facing.
+	visual_root.rotation.y = wrapf(yaw - rotation.y, -PI, PI)
+	# And glide the camera over to the new prop instead of jumping there.
+	var cam_to := pivot.position
+	pivot.global_position = cam_from
+	var tw := create_tween()
+	tw.tween_property(pivot, "position", cam_to, 0.3).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	form_changed.emit()
 
 
@@ -706,10 +720,10 @@ func confirm_hit() -> void:
 
 # Called by a projectile that hit us. Only the host's projectiles are real, so this
 # only ever runs on the host. Returns whether the hit counted (only demons get hurt).
-func take_hit(damage: int) -> bool:
+func take_hit(damage: int, by: Node = null) -> bool:
 	if role != "demon" or net_mode == "":
 		return false
-	hit_taken.emit(damage)
+	hit_taken.emit(damage, by)
 	return true
 
 
@@ -729,9 +743,14 @@ func taunt(signature: bool) -> bool:
 
 
 # Throw if the cooldown is done and there's enough blessing stamina.
+var throw_seq := 0               # numbers our throws so the host can match up hit claims
+var on_claim: Callable           # set by the network code for joined players
+
+
 func try_throw() -> bool:
 	if _throw_cooldown > 0.0 or throw_stamina < THROW_COST:
 		return false
+	_throw_strength = clampf(throw_stamina / (THROW_STAMINA_MAX * WEAK_THROW_BELOW), 0.0, 1.0)
 	throw_stamina -= THROW_COST
 	_throw_regen_wait = THROW_REGEN_DELAY
 	_shoot()
@@ -754,11 +773,22 @@ func _shoot() -> void:
 		var aim_point: Vector3 = hit["position"] if not hit.is_empty() else camera.global_position + forward * 100.0
 		direction = (aim_point - start).normalized()
 	p.global_position = start
-	p.velocity = direction * PROJECTILE_SPEED + Vector3.UP * 0.6
+	# Running low on stamina: the throw gets weaker (slower, droops sooner).
+	p.velocity = direction * PROJECTILE_SPEED * lerpf(0.35, 1.0, _throw_strength) + Vector3.UP * 0.6
+	p.gravity = lerpf(16.0, PROJECTILE_GRAVITY, _throw_strength)
 	p.shooter = self
+	throw_seq += 1
+	if p.visual_only and on_claim.is_valid():
+		var seq := throw_seq
+		p.on_claim = func(eid, point): on_claim.call(seq, eid, point)
 	_throw_cooldown = THROW_COOLDOWN
 	threw.emit(blessing)
-	launched.emit(start, p.velocity, blessing)
+	launched.emit(start, p.velocity, blessing, p.gravity, throw_seq)
+
+
+# Which way our body or prop faces, as everyone else should see it.
+func shown_yaw() -> float:
+	return rotation.y + visual_root.rotation.y
 
 
 func cycle_blessing() -> void:

@@ -62,6 +62,23 @@ func dash_setup(player, up_high := false) -> void:
 	await frames(5)
 
 
+# A spot near `want` with open ground and no prop within 4 m (props are random each round).
+func clear_spot(want: Vector3) -> Vector3:
+	for r in range(0, 20, 2):
+		for i in 12:
+			var a := TAU * i / 12.0
+			var p := want + Vector3(cos(a), 0, sin(a)) * r
+			if absf(p.x) > 24 or absf(p.z) > 24 or main.ground_below(p + Vector3.UP * 4.0).y > 0.2:
+				continue
+			var ok := true
+			for prop in main.props:
+				if is_instance_valid(prop) and prop.visible and prop.global_position.distance_to(p) < 4.0:
+					ok = false
+			if ok:
+				return Vector3(p.x, 0.1, p.z)
+	return want
+
+
 func visible_props() -> Array:
 	var out := []
 	for p in main.props:
@@ -152,7 +169,7 @@ func _run() -> void:
 			player.unpossess()
 		else:
 			player.force_possess(form)
-		player.global_position = Vector3(-20, 0.1, 20)
+		player.global_position = clear_spot(Vector3(-20, 0.1, 20))
 		player.velocity = Vector3.ZERO
 		player.rotation = Vector3.ZERO
 		await frames(5)
@@ -513,19 +530,45 @@ func _run() -> void:
 	player.velocity = Vector3.ZERO
 	player.throw_stamina = player.THROW_STAMINA_MAX
 	await frames(10)
-	var feet: Vector3 = player.global_position
+	# A stand-in demon 9 m away flings it; then we walk into where it lands.
+	var thrower := Node3D.new()
+	main.add_child(thrower)
+	thrower.global_position = player.global_position + Vector3(0, 0, 9)
 	main.state = main.State.HIDING
-	main.authority_skill(player, 0, "fire", feet + Vector3(0, 1.5, 6), Vector3(0, -0.24, -0.97), feet, -1)
-	await frames(45)
+	var fire_n: int = main._fire_counter + 1
+	main.authority_skill(thrower, 0, "fire", thrower.global_position + Vector3.UP * 1.5, Vector3(0, 0, -1), Vector3.ZERO, -1)
+	await frames(2)
+	var fb = main.fires.get(fire_n)
+	check(fb != null and fb.from.distance_to(thrower.global_position) < 2.0, "Hellfire is flung from the demon's hands")
+	var landed: float = fb.to.distance_to(thrower.global_position) if fb else 0.0
+	check(landed > 6.0 and landed < 16.0, "...and lands a good way off (%.1f m)" % landed)
+	await frames(60)
+	var feet: Vector3 = fb.to if fb else player.global_position
+	player.global_position = feet + Vector3.UP * 0.1
+	await frames(30)
 	check(player.burning <= 0.0 and player.throw_stamina >= player.THROW_STAMINA_MAX - 1.0,
 			"while the demons are still hiding, Hellfire doesn't hurt angels")
 	main.state = main.State.HUNTING
 	await frames(45)
 	check(player.burning > 0.0, "standing in Hellfire sets an angel burning")
+	check(main.heat_rect.visible, "...the whole view swims with heat")
 	check(player.throw_stamina < player.THROW_STAMINA_MAX - 15.0, "...which burns away blessing stamina")
-	player.global_position = feet + Vector3(5, 0, 0)
+	# Walking straight ahead while on fire: you lurch about.
+	player.rotation = Vector3.ZERO
+	var walk0: Vector3 = player.global_position
+	player.test_input = {"dir": Vector2(0, -1)}
+	var wander := 0.0
+	for k in 60:
+		await frames(1)
+		wander = maxf(wander, absf(player.global_position.x - walk0.x))
+	player.test_input = {}
+	check(wander > 0.4, "...and you can't walk a straight line (%.1f m off course)" % wander)
+	player.global_position = feet + Vector3(6, 0.1, 0)
 	await frames(30)
-	check(player.burning <= 0.0, "...and stepping out stops it")
+	check(player.burning > 0.0, "stepping out, you keep burning a moment")
+	await frames(120)
+	check(player.burning <= 0.0 and not main.heat_rect.visible, "...then it stops")
+	thrower.queue_free()
 
 	# Demons pay Hatred for Hellfire.
 	player.set_role("demon")

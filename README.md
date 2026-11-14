@@ -3,7 +3,7 @@
 A free, non-commercial prop-hunt game: demons possess everyday objects to hide, angels hunt them down.
 Passion project, inspired by Witch It.
 
-## Status: version 0.4.1, shrine, chat, kick and scriptures
+## Status: version 0.4.2, Redemption
 
 One small test map, placeholder shapes for everything.
 
@@ -13,7 +13,7 @@ One small test map, placeholder shapes for everything.
 - **Demons** can **transform** into a copy of any prop (click), or with skills **become** the real one (Possess) and **fly** (hold the key: you rise while Hatred lasts, gravity brings you down; no fall damage).
 - The Alarm Cherub just hovers there tooting its little horn until a demon comes close; then it blasts the horn and shows its detection bubble. Shoot it with a blessing to send it flying down a hallway.
 - **The shrine:** one per map, the only place to swap skills mid-round. Press G there; a swap takes 3 seconds in total, you can't move while at it, demons have to leave their prop first, and the shrine flares up so everyone knows someone is there. Fresh skills start on cooldown.
-- **Chat:** Enter talks to everyone, Backspace to your team only.
+- **Chat:** Enter talks to everyone, Backspace to your team only. Everyone is told who redeemed whom, and who the last demon standing is.
 - Every prop form has its own health and speed: small = fragile but quick, big = tanky but slow. Your health bar shows how much is left; the number shows real hit points for your current form.
 
 ## Playing (Windows)
@@ -82,7 +82,7 @@ Both builds are also made automatically: publishing a release on GitHub runs [th
 
 ## How online play stays fair
 
-The host is the referee. It decides every hit (other players' throws are only visuals on their own screens), checks every movement for speed hacks and out-of-bounds tricks and snaps cheaters back, mirrors blessing stamina and Hatred (flying longer than your Hatred allows, or floating without flying, drops you to the ground), checks every skill against your loadout and cooldowns, and limits taunt spam. Only angels receive names, and only their fellow angels', so no game ever knows who a disguised demon is (not even another demon's).
+The host is the referee. It decides every hit (other players' throws are only visuals on their own screens), checks every movement for speed hacks and out-of-bounds tricks and snaps cheaters back, mirrors blessing stamina and Hatred (flying longer than your Hatred allows, or floating without flying, drops you to the ground), checks every skill against your loadout and cooldowns, and limits taunt spam. Because everyone sees other players a split second in the past, a throw that hits on the thrower's screen still counts: the host checks it was a real throw, that the hit lies on its flight path with no wall in between, and that the demon really was there a moment ago. Only angels receive names, and only their fellow angels', so no game ever knows who a disguised demon is (not even another demon's).
 
 ## Automated tests
 

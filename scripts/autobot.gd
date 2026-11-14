@@ -198,6 +198,17 @@ func _aim(p, point: Vector3) -> void:
 
 
 func _play_angel(delta: float, p) -> void:
+	# --cheat=claim: a hacked client claiming a hit that never happened.
+	if "claim" in options.get("cheat", "") and p.throw_seq == 0 and main.state == main.State.HUNTING and not p.frozen:
+		p.try_throw()   # (any throw will do: the claim is what's fake)
+	if "claim" in options.get("cheat", "") and p.throw_seq > 0 and not _used.has("fakeclaim") and main.net:
+		for eid in main.net.remotes:
+			var r = main.net.remotes[eid]
+			if r.role == "demon":
+				_used["fakeclaim"] = true
+				log_line("cheating: claiming a hit on a far-away demon")
+				main.net.claim_hit(p.throw_seq, eid, r.global_position + Vector3(0, 30, 0))
+				break
 	if p.frozen or options.has("lazy"):
 		p.test_input = {}
 		return
@@ -221,6 +232,16 @@ func _play_angel(delta: float, p) -> void:
 	p.rotation.y = atan2(-to.x, -to.z)   # face it (-Z is forward)
 	if leap_slot >= 0 and best < 14.0 and p.is_on_floor() and p.use_skill(leap_slot):
 		_log_once("leap")
+	# Cherub and vacuum don't need a clear shot: use them as soon as a demon is fairly close.
+	if best < 30.0:
+		for slot in 2:
+			var sid: String = p.loadout["angel"][slot]
+			if (sid == "cherub" or sid == "vacuum") and p.use_skill(slot):
+				_log_once(sid)
+	# Far away: dash to close the gap.
+	var dash_slot: int = p.loadout["angel"].find("dash")
+	if dash_slot >= 0 and best > 9.0 and not p._leaping and not _used.has("dash") and p.use_skill(dash_slot):
+		_log_once("dash")
 	var aim_point: Vector3 = target.global_position + Vector3.UP * 0.35
 	var eye: Vector3 = p.camera.global_position
 	var flat := Vector2(aim_point.x - eye.x, aim_point.z - eye.z).length()
@@ -238,7 +259,7 @@ func _play_angel(delta: float, p) -> void:
 			_log_once("melee")
 		for slot in 2:
 			var id: String = p.loadout["angel"][slot]
-			if id != "" and id != "leap" and not (id == "dash" and p._leaping) and p.use_skill(slot):
+			if id != "" and id != "leap" and id != "dash" and p.use_skill(slot):
 				_log_once(id)
 		if p.try_throw():
 			_misses += 1

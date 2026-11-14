@@ -306,6 +306,7 @@ func start_round() -> void:
 			_ensure_host_remote(id)
 	_broadcast_count()
 	print("[host] round started: %d angel(s), %d demon(s)" % [angel_count, ids.size() - angel_count])
+	_start_demons = ids.size() - angel_count
 
 
 # The host moves a player (spawn, respawn). Updates already on their way from the
@@ -387,6 +388,9 @@ func _ensure_host_remote(id: int) -> void:
 	r.net = self
 	r.set_name_for_teammate(rec["name"] if rec["role"] == peers[1]["role"] and rec["role"] == "angel" else "")
 	r.apply_state(rec["pos"], rec["yaw"], rec["form"], rec["role"])
+
+
+var _start_demons := 0
 
 
 func _demons_left() -> int:
@@ -486,8 +490,9 @@ func _host_tick(delta: float) -> void:
 	if me["in_round"]:
 		me["pos"] = main.player.global_position
 		me["valid_pos"] = me["pos"]
-		me["yaw"] = main.player.rotation.y
+		me["yaw"] = main.player.shown_yaw()
 		me["form"] = main.player.possessed_type
+		_record_history(1, me["pos"])
 	_relay_accum += delta
 	if _relay_accum >= 1.0 / RELAY_RATE:
 		_relay_accum = 0.0
@@ -573,7 +578,7 @@ func _client_tick(delta: float) -> void:
 	if _send_accum >= 1.0 / SEND_RATE:
 		_send_accum = 0.0
 		var p = main.player
-		c_state.rpc_id(1, p.global_position, p.rotation.y, p.possessed_type, p.flying)
+		c_state.rpc_id(1, p.global_position, p.shown_yaw(), p.possessed_type, p.flying)
 
 
 # ---------------- movement checks (host) ----------------
@@ -592,7 +597,8 @@ func c_state(pos: Vector3, yaw: float, form: String, flying: bool) -> void:
 		return
 	var rec: Dictionary = peers[id]
 	var t := now()
-	var dt := clampf(t - rec["last_time"], 0.0, 1.0)
+	# (Two updates can arrive in the same instant; count at least one update's worth of time.)
+	var dt := clampf(t - rec["last_time"], 1.0 / SEND_RATE, 1.0)
 	var flat := Vector2(pos.x - rec["valid_pos"].x, pos.z - rec["valid_pos"].z).length()
 	var problem := ""
 	if not _in_bounds(pos):
@@ -620,6 +626,7 @@ func c_state(pos: Vector3, yaw: float, form: String, flying: bool) -> void:
 		_drop_to_ground(id, rec, pos)
 		return
 	rec["pos"] = pos
+	_record_history(id, pos)
 	rec["valid_pos"] = pos
 	rec["yaw"] = yaw
 	rec["form"] = form
@@ -685,18 +692,18 @@ func _note_cheat(id: int, what: String) -> void:
 # ---------------- throws, hits, catches ----------------
 
 # Our own throw just left our hand.
-func on_local_launched(origin: Vector3, velocity: Vector3, kind: String) -> void:
+func on_local_launched(origin: Vector3, velocity: Vector3, kind: String, gravity: float, seq: int) -> void:
 	if not main.in_online_round():
 		return
 	if is_host:
 		for id in _client_ids():
-			s_projectile.rpc_id(id, origin, velocity, kind)
+			s_projectile.rpc_id(id, origin, velocity, kind, gravity)
 	else:
-		c_throw.rpc_id(1, origin, velocity, kind)
+		c_throw.rpc_id(1, origin, velocity, kind, gravity, seq)
 
 
 @rpc("any_peer", "call_remote", "reliable")
-func c_throw(origin: Vector3, velocity: Vector3, kind: String) -> void:
+func c_throw(origin: Vector3, velocity: Vector3, kind: String, gravity: float, seq: int) -> void:
 	if not is_host:
 		return
 	var id := multiplayer.get_remote_sender_id()
@@ -705,7 +712,7 @@ func c_throw(origin: Vector3, velocity: Vector3, kind: String) -> void:
 	var rec: Dictionary = peers[id]
 	if not rec["in_round"] or rec["role"] != "angel" or phase != "hunting":
 		return
-	if not Blessings.KINDS.has(kind) or velocity.length() > 45.0:
+	if not Blessings.KINDS.has(kind) or velocity.length() > 85.0 or gravity < 3.9 or gravity > 16.1:
 		return
 	if not _origin_ok(rec, origin):
 		_note_cheat(id, "throwing from somewhere they aren't")
@@ -720,25 +727,157 @@ func c_throw(origin: Vector3, velocity: Vector3, kind: String) -> void:
 		return
 	rec["stamina"] -= THROW_COST
 	rec["throws"] += 1
+	# Remember the throw: it can hurt a demon once, either by the host's own copy
+	# hitting, or by the thrower's claim that it hit on their screen (checked below).
+	var throws: Dictionary = rec.get("throw_log", {})
+	for old_seq in throws.keys():
+		if t - throws[old_seq]["t"] > 4.0:
+			throws.erase(old_seq)
+	throws[seq] = {"origin": origin, "vel": velocity, "g": gravity, "t": t, "used": false}
+	rec["throw_log"] = throws
 	var p := Projectile.new()
 	p.color = Blessings.color(kind)
 	p.shooter = remotes.get(rec["eid"])
+	p.gravity = gravity
+	p.gate = func(): return _use_throw(id, seq)
 	main.add_child(p)
 	p.global_position = origin
 	p.velocity = velocity
 	for other in _client_ids():
 		if other != id:
-			s_projectile.rpc_id(other, origin, velocity, kind)
+			s_projectile.rpc_id(other, origin, velocity, kind, gravity)
+
+
+func _use_throw(id: int, seq: int) -> bool:
+	if not peers.has(id):
+		return false
+	var entry = peers[id].get("throw_log", {}).get(seq)
+	if entry == null or entry["used"]:
+		return false
+	entry["used"] = true
+	return true
 
 
 @rpc("authority", "call_remote", "reliable")
-func s_projectile(origin: Vector3, velocity: Vector3, kind: String) -> void:
+func s_projectile(origin: Vector3, velocity: Vector3, kind: String, gravity: float) -> void:
 	var p := Projectile.new()
 	p.color = Blessings.color(kind)
 	p.visual_only = true
+	p.gravity = gravity
 	main.add_child(p)
 	p.global_position = origin
 	p.velocity = velocity
+
+
+# ---- "My throw hit them on my screen" ----
+# Everyone sees other players a moment in the past (network delay plus smoothing),
+# so a throw that clearly hit on the thrower's screen can miss where the host has
+# them now. The thrower says which throw hit whom and where; the host believes it
+# only if all of this checks out:
+#   - it's a real, recent throw of theirs that hasn't hurt anyone yet,
+#   - the hit point lies on that throw's flight path, with no wall in between,
+#   - the demon really was at that spot within the last moment.
+func claim_hit(seq: int, eid: int, point: Vector3) -> void:
+	c_hit_claim.rpc_id(1, seq, eid, point)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_hit_claim(seq: int, eid: int, point: Vector3) -> void:
+	if not is_host or phase != "hunting":
+		return
+	var id := multiplayer.get_remote_sender_id()
+	if not peers.has(id):
+		return
+	var rec: Dictionary = peers[id]
+	var entry = rec.get("throw_log", {}).get(seq)
+	var target := _peer_for_eid(eid)
+	var why := ""
+	var t_fly := -1.0
+	if entry == null:
+		why = "no such throw"
+	elif entry["used"]:
+		why = "that throw already hit"
+	elif target == 0 or target == id or peers[target]["role"] != "demon":
+		why = "not a demon"
+	else:
+		t_fly = _time_on_path(entry, point)
+	if why != "":
+		pass
+	elif t_fly < 0.0:
+		why = "not on that throw's path"
+	elif not _path_clear(entry, t_fly, id, target):
+		why = "through a wall"
+	elif not _was_near(target, point, entry["t"] + t_fly):
+		why = "the demon wasn't there"
+	if why != "":
+		print("[host] refused %s's hit claim: %s" % [rec["name"], why])
+		return
+	entry["used"] = true
+	print("[host] %s's hit claim on %s accepted" % [rec["name"], peers[target]["name"]])
+	if damage_player(target, Projectile.DAMAGE, id):
+		rec["hits"] += 1
+		s_hit_confirm.rpc_id(id)
+
+
+# When the throw passes within 0.6 m of the point (seconds after the throw), or -1.
+func _time_on_path(entry: Dictionary, point: Vector3) -> float:
+	var g := Vector3(0, -entry["g"], 0)
+	var best := INF
+	var best_t := -1.0
+	var tt := 0.0
+	while tt <= Projectile.LIFETIME:
+		var p: Vector3 = entry["origin"] + entry["vel"] * tt + 0.5 * g * tt * tt
+		var d := p.distance_to(point)
+		if d < best:
+			best = d
+			best_t = tt
+		tt += 0.005
+	return best_t if best <= 0.6 else -1.0
+
+
+# No wall, building or plain prop between the throw and the hit (players don't count).
+func _path_clear(entry: Dictionary, t_hit: float, thrower: int, target: int) -> bool:
+	var g := Vector3(0, -entry["g"], 0)
+	var skip := []
+	for pid in peers:
+		var node = main.player if pid == 1 else remotes.get(peers[pid]["eid"])
+		if node is CollisionObject3D:
+			skip.append(node)
+	var steps := maxi(int(t_hit / 0.02), 1)
+	var prev: Vector3 = entry["origin"]
+	for i in range(1, steps + 1):
+		var tt := t_hit * i / steps - 0.03 * float(i == steps)
+		var p: Vector3 = entry["origin"] + entry["vel"] * tt + 0.5 * g * tt * tt
+		var hit: Dictionary = main._ray(prev, p, skip)
+		if not hit.is_empty():
+			return false
+		prev = p
+	return true
+
+
+# Was that demon's body at this point at about that time? Generous with time
+# (lag + smoothing), strict with distance.
+func _was_near(id: int, point: Vector3, when: float) -> bool:
+	var form: String = peers[id]["form"]
+	var reach := 1.0 if form == "" else 1.4
+	for h in peers[id].get("hist", []):
+		if h[0] < when - 1.0 or h[0] > when + 0.3:
+			continue
+		var pos: Vector3 = h[1]
+		var flat := Vector2(point.x - pos.x, point.z - pos.z).length()
+		if flat <= reach and point.y > pos.y - 0.4 and point.y < pos.y + 2.6:
+			return true
+	return false
+
+
+# Host: remember where everyone was over the last couple of seconds.
+func _record_history(id: int, pos: Vector3) -> void:
+	var t := now()
+	var hist: Array = peers[id].get("hist", [])
+	hist.append([t, pos])
+	while not hist.is_empty() and t - hist[0][0] > 2.5:
+		hist.pop_front()
+	peers[id]["hist"] = hist
 
 
 func _peer_for_eid(eid: int) -> int:
@@ -749,8 +888,19 @@ func _peer_for_eid(eid: int) -> int:
 
 
 # A host projectile hit a joined player.
-func on_remote_hit(remote, damage: int) -> bool:
-	return damage_player(_peer_for_eid(remote.eid), damage)
+func on_remote_hit(remote, damage: int, by: Node = null) -> bool:
+	return damage_player(_peer_for_eid(remote.eid), damage, peer_of(by))
+
+
+# Which player a body belongs to (0 if none): our own player is the host (1).
+func peer_of(node) -> int:
+	if node == null or not is_instance_valid(node):
+		return 0
+	if node == main.player:
+		return 1
+	if node is RemotePlayer:
+		return _peer_for_eid(node.eid)
+	return 0
 
 
 func on_remote_confirm(remote) -> void:
@@ -765,12 +915,14 @@ func s_hit_confirm() -> void:
 	main.player.confirm_hit()
 
 
-func damage_player(id: int, damage: int) -> bool:
+func damage_player(id: int, damage: int, by := 0) -> bool:
 	if not is_host or not peers.has(id) or phase != "hunting":
 		return false
 	var rec: Dictionary = peers[id]
 	if rec["role"] != "demon" or not rec["in_round"]:
 		return false
+	if by != 0:
+		rec["last_hit_by"] = by
 	# Health is kept as a fraction, so switching forms keeps your percentage:
 	# the same hit hurts a stack of books (50 hp) more than a hay bale (150 hp).
 	rec["hp"] -= float(damage) / PropLib.max_hp(rec["form"])
@@ -802,17 +954,35 @@ func _catch(id: int) -> void:
 	rec["stamina"] = THROW_STAMINA_MAX
 	rec["stamina_time"] = now()
 	_place(rec, main.spawn_point("angel", randi() % 4))
+	var by: int = rec.get("last_hit_by", 0)
+	var by_name: String = peers[by]["name"] if peers.has(by) else ""
+	rec["last_hit_by"] = 0
 	print("[host] %s was caught" % rec["name"])
 	# Names first: the redeemed player must lose their old teammates' names
 	# before they're told they switched sides (and angels learn theirs).
 	_send_rosters()
 	if id == 1:
-		main.online_you_were_caught(rec["pos"])
+		main.online_you_were_caught(rec["pos"], by_name)
 	else:
-		s_you_were_caught.rpc_id(id, rec["pos"])
+		s_you_were_caught.rpc_id(id, rec["pos"], by_name)
+	# Everyone hears about it: "Wife redeemed Brother!"
+	var news := ("%s redeemed %s!" % [by_name, rec["name"]]) if by_name != "" else ("%s was redeemed!" % rec["name"])
+	print("[host] " + news)
+	main.announce(news)
+	for other in _client_ids():
+		s_announce.rpc_id(other, news)
 		if remotes.has(rec["eid"]):
 			remotes[rec["eid"]].apply_state(rec["pos"], rec["yaw"], "", "angel")
 	_broadcast_count()   # count first, so "N left" messages are up to date
+	# Down to the last demon (and there were more to begin with): everyone hears who.
+	if _demons_left() == 1 and _start_demons > 1:
+		for pid in peers:
+			if peers[pid]["in_round"] and peers[pid]["role"] == "demon":
+				var last := "%s is the LAST demon standing!" % peers[pid]["name"]
+				print("[host] " + last)
+				main.announce(last)
+				for other in _client_ids():
+					s_announce.rpc_id(other, last)
 	main.online_caught_fx(where)
 	for other in _client_ids():
 		s_caught_fx.rpc_id(other, where)
@@ -820,8 +990,13 @@ func _catch(id: int) -> void:
 
 
 @rpc("authority", "call_remote", "reliable")
-func s_you_were_caught(pos: Vector3) -> void:
-	main.online_you_were_caught(pos)
+func s_you_were_caught(pos: Vector3, by_name: String) -> void:
+	main.online_you_were_caught(pos, by_name.substr(0, 16))
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_announce(text: String) -> void:
+	main.announce(text.substr(0, 80))
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -1098,7 +1273,7 @@ func on_local_release() -> void:
 	if not main.in_online_round():
 		return
 	if is_host:
-		main.authority_release(1, main.player.global_position, main.player.rotation.y)
+		main.authority_release(1, main.player.global_position, main.player.shown_yaw())
 	else:
 		c_release.rpc_id(1)
 

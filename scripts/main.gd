@@ -22,9 +22,29 @@ const Vortex = preload("res://scripts/vortex.gd")
 const Projectile = preload("res://scripts/projectile.gd")
 const Updater = preload("res://scripts/updater.gd")
 
-const GAME_CODENAME := "Holy Kick"
+const GAME_CODENAME := "Redemption"
 const HIDE_TIME := 30.0
 const HUNT_TIME := 180.0
+const HEAT_SHADER := """
+shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear_mipmap;
+uniform float strength = 0.0;
+void fragment() {
+	float t = TIME;
+	vec2 uv = SCREEN_UV;
+	// Big slow swirls plus fast shimmer, like looking through a bonfire.
+	uv.x += strength * (0.025 * sin(uv.y * 9.0 + t * 3.1) + 0.008 * sin(uv.y * 47.0 + t * 17.0));
+	uv.y += strength * (0.02 * sin(uv.x * 7.0 - t * 2.3) + 0.008 * cos(uv.x * 39.0 + t * 13.0));
+	// Edges pulled in and out, like the view is breathing.
+	uv = mix(uv, vec2(0.5) + (uv - vec2(0.5)) * (1.0 + 0.06 * sin(t * 4.0)), strength);
+	vec3 c = textureLod(screen_tex, uv, strength * 1.5).rgb;
+	// Hot orange cast and a red glow creeping in from the edges.
+	float edge = smoothstep(0.35, 0.75, distance(SCREEN_UV, vec2(0.5)));
+	c = mix(c, c * vec3(1.35, 0.8, 0.45) + vec3(0.12, 0.03, 0.0), strength * 0.7);
+	c = mix(c, vec3(0.9, 0.25, 0.02), edge * strength * 0.55);
+	COLOR = vec4(c, 1.0);
+}
+"""
 const HIDE_CHOICES := [15.0, 30.0, 45.0, 60.0, 90.0]
 const HUNT_CHOICES := [120.0, 180.0, 300.0, 600.0, 900.0, 1800.0]
 const BOT_COUNT := 3
@@ -66,6 +86,7 @@ var chat_team_only := false
 var _chat_lines := []           # [Label, seconds left on screen]
 var lobby_times: VBoxContainer   # host's round-length pickers
 var _time_pick := {}            # picker label -> chosen index
+var heat_rect: ColorRect         # Hellfire screen distortion
 var hold_bar: ColorRect          # "returning to demon form" progress, under the crosshair
 var hold_fill: ColorRect
 var player: Player
@@ -434,6 +455,19 @@ func _send_chat(text: String) -> void:
 		return
 	if net:
 		net.send_chat(text, chat_team_only)
+
+
+# Big news for everyone (who redeemed whom): shown in gold in the chat area.
+func announce(text: String) -> void:
+	var lbl := _make_label(19)
+	lbl.text = "*** %s ***" % text
+	lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	chat_box.add_child(lbl)
+	print("[news] " + text)
+	_chat_lines.append([lbl, 8.0])
+	while _chat_lines.size() > 8:
+		_chat_lines[0][0].queue_free()
+		_chat_lines.pop_front()
 
 
 # Called by the network for every chat line we're allowed to see.
@@ -927,6 +961,7 @@ func _on_join_pressed() -> void:
 		return
 	mode = "online"
 	player.net_mode = "client"
+	player.on_claim = func(seq, eid, point): if net: net.claim_hit(seq, eid, point)
 	_hide_menus()
 	lobby_players.text = "Connecting to %s..." % address
 	lobby_info.text = ""
@@ -1173,7 +1208,7 @@ func online_affected(target: Vector3, hatred_drain: float, lockout: float, label
 		_toast(label, 1.2)
 
 
-func online_you_were_caught(pos: Vector3) -> void:
+func online_you_were_caught(pos: Vector3, by_name := "") -> void:
 	role = "angel"
 	player.set_role("angel")
 	player.velocity = Vector3.ZERO
@@ -1181,7 +1216,8 @@ func online_you_were_caught(pos: Vector3) -> void:
 	player.rotation.y = PI
 	player.frozen = false
 	controls_label.text = _controls_text()
-	_toast("You were caught and REDEEMED!\nNow you're an angel. Hunt your old friends!", 4.0)
+	var who := ("%s got you!\n" % by_name) if by_name != "" else ""
+	_toast("%sYou were caught and REDEEMED!\nNow you're an angel. Hunt your old friends!" % who, 4.0)
 
 
 func online_caught_fx(pos: Vector3) -> void:
@@ -1218,14 +1254,14 @@ func online_disconnected(message: String) -> void:
 	_show_menu(message)
 
 
-func _on_player_launched(origin: Vector3, velocity: Vector3, kind: String) -> void:
+func _on_player_launched(origin: Vector3, velocity: Vector3, kind: String, gravity: float, seq: int) -> void:
 	if net:
-		net.on_local_launched(origin, velocity, kind)
+		net.on_local_launched(origin, velocity, kind, gravity, seq)
 
 
-func _on_player_hit_taken(damage: int) -> void:
+func _on_player_hit_taken(damage: int, by: Node) -> void:
 	if net and net.is_host:
-		net.damage_player(1, damage)
+		net.damage_player(1, damage, net.peer_of(by))
 
 
 # ---------- skills: deciding what happens ----------
@@ -1257,7 +1293,7 @@ func _on_player_melee(origin: Vector3, dir: Vector3) -> void:
 
 func _on_player_released() -> void:
 	if mode == "practice":
-		authority_release(0, player.global_position, player.rotation.y)
+		authority_release(0, player.global_position, player.shown_yaw())
 	elif net:
 		net.on_local_release()
 
@@ -1305,34 +1341,36 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 			broadcast_fx("cherub", [_cherub_counter, pos, vel])
 			print("[decider] cherub dropped")
 		"fire":
-			if point.distance_to(origin) > Skills.FIRE_RANGE + 2.0:
-				return
+			# Flung from the demon's hands; it lights wherever it comes down.
 			_fire_counter += 1
-			var spot := ground_below(point - dir * 0.3)
-			broadcast_fx("fire", [_fire_counter, user.global_position + Vector3.UP * 1.0, spot])
+			var flat := Vector3(dir.x, 0.0, dir.z).normalized()
+			var from: Vector3 = user.global_position + Vector3.UP * 1.3 + flat * 0.6
+			var vel: Vector3 = dir * Skills.FIRE_THROW_SPEED + Vector3.UP * Skills.FIRE_THROW_UP
+			var flight := _fly_until_hit(from, vel, Skills.FIRE_GRAVITY, [user])
+			var spot := ground_below(flight[0] - vel.normalized() * 0.3)
+			broadcast_fx("fire", [_fire_counter, from, vel, spot, flight[1]])
 			print("[decider] hellfire lit")
 		"scripture":
 			var book := _spawn_scripture(origin, dir, false)
 			book.shooter = user
 			broadcast_fx("scripture", [origin, dir], user_key)
 		"kick":
-			var hit := _ray(origin, origin + dir * Skills.KICK_RANGE, [user])
-			if hit.is_empty() or not hit["collider"].has_method("take_hit"):
+			var c = _close_demon(user, dir, Skills.KICK_RANGE)
+			if c == null:
 				return
-			var c = hit["collider"]
-			if c.take_hit(Skills.KICK_DAMAGE):
+			if c.take_hit(Skills.KICK_DAMAGE, user):
 				user.confirm_hit()
 				var away := Vector3(dir.x, 0.0, dir.z).normalized()
 				var land := ground_below(c.global_position + away * Skills.KICK_PUSH + Vector3.UP * 1.0)
 				_affect_demon(c, land, 0.0, 0.0, "KICKED!")
-				broadcast_fx("kick", [hit["position"]])
+				broadcast_fx("kick", [c.global_position + Vector3.UP * 0.6])
 				print("[decider] holy kick sent a demon flying")
 		"stomp":
 			var hurt := 0
 			for d in demon_targets():
 				var off: Vector3 = d.global_position - origin
 				if Vector2(off.x, off.z).length() <= Skills.STOMP_RADIUS and absf(off.y) < 2.5 \
-						and d.has_method("take_hit") and d.take_hit(Skills.STOMP_DAMAGE):
+						and d.has_method("take_hit") and d.take_hit(Skills.STOMP_DAMAGE, user):
 					hurt += 1
 			if hurt > 0 and user.has_method("confirm_hit"):
 				user.confirm_hit()
@@ -1355,11 +1393,49 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 
 
 func authority_melee(user: Node3D, _user_key: int, origin: Vector3, dir: Vector3) -> void:
-	var hit := _ray(origin, origin + dir * Skills.MELEE_RANGE, [user])
-	if not hit.is_empty() and hit["collider"].has_method("take_hit") \
-			and hit["collider"].take_hit(Skills.MELEE_DAMAGE):
+	var d = _close_demon(user, dir, Skills.MELEE_RANGE)
+	if d and d.take_hit(Skills.MELEE_DAMAGE, user):
 		user.confirm_hit()
 		print("[decider] melee hit a demon")
+
+
+# Up-close attacks (melee, kick) don't need pixel-perfect aim: the nearest demon
+# within reach, roughly in front of you (within 45 degrees) and not behind a wall.
+func _close_demon(user: Node3D, dir: Vector3, reach: float):
+	var flat_dir := Vector2(dir.x, dir.z).normalized()
+	var me := user.global_position + Vector3.UP * 0.9
+	var best = null
+	var best_d := INF
+	for d in demon_targets():
+		if d == user or not d.has_method("take_hit"):
+			continue
+		var off: Vector3 = d.global_position + Vector3.UP * 0.5 - me
+		var flat := Vector2(off.x, off.z)
+		var dist := flat.length()
+		if dist > reach + 0.6 or absf(off.y) > 2.0 or dist >= best_d:
+			continue
+		if dist > 0.5 and rad_to_deg(absf(flat_dir.angle_to(flat))) > 45.0:
+			continue
+		var wall := _ray(me, d.global_position + Vector3.UP * 0.5, [user, d])
+		if not wall.is_empty():
+			continue
+		best = d
+		best_d = dist
+	return best
+
+
+# Follow a thrown thing's arc until it hits something: [where, after how many seconds].
+func _fly_until_hit(from: Vector3, vel: Vector3, g: float, skip: Array) -> Array:
+	var t := 0.0
+	var prev := from
+	while t < 4.0:
+		t += 0.02
+		var p := from + vel * t + Vector3.DOWN * 0.5 * g * t * t
+		var hit := _ray(prev, p, skip)
+		if not hit.is_empty():
+			return [hit["position"], t]
+		prev = p
+	return [prev, t]
 
 
 func _spawn_scripture(origin: Vector3, dir: Vector3, visual_only: bool) -> Projectile:
@@ -1464,7 +1540,7 @@ func _check_burning() -> void:
 			continue
 		var off: Vector3 = me - f.global_position
 		if f.is_lit() and Vector2(off.x, off.z).length() <= Skills.FIRE_RADIUS and off.y > -0.5 and off.y < 1.5:
-			player.burning = 0.2
+			player.burning = maxf(player.burning, Skills.FIRE_LINGER)
 
 
 func _check_cherubs(delta: float) -> void:
@@ -1561,7 +1637,9 @@ func fx(kind: String, args: Array) -> void:
 		"fire":
 			var f := Fire.new()
 			f.from = args[1]
-			f.to = args[2]
+			f.vel = args[2]
+			f.to = args[3]
+			f.flight_time = args[4]
 			_fx_parent().add_child(f)
 			fires[args[0]] = f
 		"kick":
@@ -1680,6 +1758,17 @@ func _build_hud() -> void:
 	var hud := CanvasLayer.new()
 	hud_layer = hud
 	add_child(hud)
+
+	# Burning in Hellfire: the whole view wobbles and swims with heat (HUD stays readable).
+	heat_rect = ColorRect.new()
+	heat_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	heat_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var heat := ShaderMaterial.new()
+	heat.shader = Shader.new()
+	heat.shader.code = HEAT_SHADER
+	heat_rect.material = heat
+	heat_rect.visible = false
+	hud.add_child(heat_rect)
 
 	blind_rect = ColorRect.new()
 	blind_rect.color = Color(0.06, 0.03, 0.1)
@@ -2062,6 +2151,9 @@ func _update_hud(delta: float) -> void:
 
 	_hurt_time -= delta
 	hurt_rect.color.a = clampf(_hurt_time, 0.0, 0.25) * 1.4
+	heat_rect.visible = player.burning > 0.0
+	if heat_rect.visible:
+		(heat_rect.material as ShaderMaterial).set_shader_parameter("strength", clampf(player.burning / Skills.FIRE_LINGER, 0.25, 1.0))
 	if player.burning > 0.0:   # standing in demon fire: orange glow at the edges of sight
 		hurt_rect.color = Color(1.0, 0.45, 0.05, maxf(hurt_rect.color.a, 0.18 + sin(Time.get_ticks_msec() * 0.02) * 0.05))
 	else:

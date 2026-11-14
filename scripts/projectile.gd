@@ -18,6 +18,8 @@ var gravity := 4.0
 var size := 0.12
 var book := false                # Holy Scripture: a spinning book instead of a glowing ball
 var on_impact: Callable          # called with the hit position (vacuum orb); host/practice only
+var on_claim: Callable           # joined player's own throw hit a demon ON THEIR SCREEN: (entity id, hit point)
+var gate: Callable               # host: may this throw still hurt someone? (each throw hurts once)
 var _life := LIFETIME
 
 
@@ -88,7 +90,10 @@ func _physics_process(delta: float) -> void:
 		on_impact.call(hit["position"])
 	if not visual_only and collider and collider.has_method("kick"):
 		collider.kick(velocity)   # the angels' alarm cherub goes skidding
-	if not visual_only and damage > 0 and collider and collider.has_method("take_hit") and collider.take_hit(damage):
+	if visual_only and on_claim.is_valid() and collider and collider.get("eid") != null and collider.get("role") == "demon":
+		on_claim.call(collider.eid, hit["position"])   # the host checks it against what really happened
+	var allowed: bool = not gate.is_valid() or gate.call()
+	if not visual_only and allowed and damage > 0 and collider and collider.has_method("take_hit") and collider.take_hit(damage, shooter):
 		hit_demon = true
 		if is_instance_valid(shooter) and shooter.has_method("confirm_hit"):
 			shooter.confirm_hit()

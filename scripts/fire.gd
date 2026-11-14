@@ -8,10 +8,11 @@ const Skills = preload("res://scripts/skills.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 const Effects = preload("res://scripts/effects.gd")
 
-const TRAVEL_SPEED := 30.0
 
 var from := Vector3.ZERO
-var to := Vector3.ZERO
+var vel := Vector3.ZERO           # thrown from `from` with this velocity...
+var to := Vector3.ZERO            # ...and lights here after `flight_time` seconds
+var flight_time := 0.3
 var _travel := 0.0
 var _travel_time := 0.3
 var _life := Skills.FIRE_LIFETIME
@@ -29,7 +30,7 @@ func _ready() -> void:
 	if _whoosh == null:
 		_whoosh = Sfx.voice([[180, 90, 0.35, 0.8, 0.0]], 0.2, 0.6, 0.5)
 		_crackle = Sfx.voice([[120, 110, 0.5, 0.5, 0.0]], 0.12, 0.9, 0.7)
-	_travel_time = maxf(from.distance_to(to) / TRAVEL_SPEED, 0.1)
+	_travel_time = maxf(flight_time, 0.05)
 	global_position = from
 
 	_ball = MeshInstance3D.new()
@@ -118,7 +119,8 @@ func _process(delta: float) -> void:
 	if not _lit:
 		_travel += delta
 		var t := minf(_travel / _travel_time, 1.0)
-		global_position = from.lerp(to, t) + Vector3.UP * sin(t * PI) * 0.8
+		var ft := t * _travel_time
+		global_position = from + vel * ft + Vector3.DOWN * 0.5 * Skills.FIRE_GRAVITY * ft * ft
 		if t >= 1.0:
 			_light_up()
 		return

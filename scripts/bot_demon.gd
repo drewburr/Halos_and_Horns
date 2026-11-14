@@ -66,7 +66,7 @@ func _process(delta: float) -> void:
 		tw.tween_property(visual, "position:y", 0.0, 0.15)
 
 
-func take_hit(damage: int) -> bool:
+func take_hit(damage: int, _by: Node = null) -> bool:
 	if health <= 0:
 		return false
 	health -= damage

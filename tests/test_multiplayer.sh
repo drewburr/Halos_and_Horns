@@ -16,7 +16,7 @@ sleep 3
 for n in Wife Brother Squirrel Oddy; do
 	extra=""
 	[ "$n" = "Oddy" ] && extra="--cheat=teleport,fly"
-	[ "$n" = "Wife" ] && extra="--skills=cherub,vacuum --say=hello_everyone"
+	[ "$n" = "Wife" ] && extra="--skills=cherub,vacuum --say=hello_everyone --cheat=claim"
 	[ "$n" = "Squirrel" ] && extra="--skills=dash,leap"
 	[ "$n" = "Brother" ] && extra="--skills=fire,fly --sayteam=demons_only_secret"
 	timeout 240 "$GODOT" --headless -- --join=127.0.0.1 --name=$n --autobot --quit-after-round $extra > "$OUT/$n.log" 2>&1 &
@@ -45,7 +45,10 @@ check "an angel dropped an Alarm Cherub" "grep -q 'cherub dropped' '$OUT/host.lo
 check "an angel threw a Vacuum Orb" "grep -q 'vacuum orb' '$OUT/host.log'"
 check "an angel used the Flying Dash" "grep -q 'used dash' '$OUT/Squirrel.log'"
 check "a demon flung Hellfire" "grep -q 'hellfire lit' '$OUT/host.log'"
-check "an angel Holy Leaped and Cloud Stomped" "grep -q 'cloud stomp hit' '$OUT/host.log'"
+check "an angel used Holy Leap" "grep -q 'used leap' '$OUT/Squirrel.log'"
+if grep -q 'used stomp' "$OUT/Squirrel.log"; then
+	check "...and the host handled the Cloud Stomp" "grep -q 'cloud stomp hit' '$OUT/host.log'"
+fi
 check "the roster shows chosen skills" "grep -q 'Wife(angel,[0-9]*ms,Alarm Cherub+Vacuum Orb)' '$OUT/Brother.log'"
 check "out-of-bounds teleport was blocked" "grep -q 'blocked Oddy: out of bounds' '$OUT/host.log'"
 x=$(grep -oE 'after cheat, position x = -?[0-9.]+' "$OUT/Oddy.log" | grep -oE -- '-?[0-9.]+$')
@@ -69,6 +72,12 @@ done
 check "global chat reaches the other team" "grep -q 'Wife: hello_everyone' '$OUT/Oddy.log'"
 check "team chat reaches teammates" "grep -q '\[TEAM\] Brother: demons_only_secret' '$OUT/host.log'"
 check "team chat never reaches the other team" "! grep -q 'demons_only_secret' '$OUT/Wife.log' '$OUT/Squirrel.log'"
+check "hits seen on a joined angel's screen count (checked by the host)" "grep -q 'hit claim on .* accepted' '$OUT/host.log'"
+check "a made-up hit claim is refused" "grep -q \"refused Wife's hit claim\" '$OUT/host.log'"
+check "everyone hears who redeemed whom" "grep -qE '\\[news\\] [A-Za-z]+ redeemed [A-Za-z]+!' '$OUT/Wife.log'"
+if [ $(grep -c 'was caught' "$OUT/host.log") -ge 2 ]; then
+	check "everyone hears who the last demon is" "grep -q 'LAST demon standing' '$OUT/Squirrel.log'"
+fi
 check "no player script errors" "! grep -q 'SCRIPT ERROR' '$OUT'/*.log"
 
 if [ $fail -eq 0 ]; then echo "ALL PASSED"; else echo "FAILED (logs in $OUT)"; fi

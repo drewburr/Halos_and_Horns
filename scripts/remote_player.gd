@@ -26,6 +26,12 @@ var _shape: CollisionShape3D
 var _nameplate: Label3D
 var _voice: AudioStreamPlayer3D
 var _has_state := false
+# Smooth movement: we show other players a tenth of a second in the past, sliding
+# between the last two positions we got, instead of chasing the newest one (which
+# arrives in uneven bursts and made props look skippy).
+const INTERP_DELAY := 0.1
+var _snaps := []          # [time received, position, yaw], oldest first
+var _plate_h := 2.0       # nameplate height above the feet
 
 
 func _ready() -> void:
@@ -63,15 +69,28 @@ func set_name_for_teammate(n: String) -> void:
 func apply_state(pos: Vector3, yaw: float, new_form: String, new_role: String) -> void:
 	_target_pos = pos
 	_target_yaw = yaw
+	var t := Time.get_ticks_msec() / 1000.0
 	# Snap on big jumps (respawns, teleports): sliding across the map would drag
 	# anyone in the way along with it.
-	if not _has_state or snap or global_position.distance_to(pos) > 3.0:
+	var jump := _snaps.is_empty() or (_snaps[-1][1] as Vector3).distance_to(pos) > 3.0
+	if not _has_state or jump:
+		_snaps.clear()
 		global_position = pos
 		rotation.y = yaw
+		if _visual:
+			_visual.top_level = false
 		if not _has_state:
 			_has_state = true
 			_shape.disabled = false
 			visible = true
+	_snaps.append([t, pos, yaw])
+	while _snaps.size() > 20:
+		_snaps.pop_front()
+	if snap:
+		# The host's copy: the body sits exactly where the player last said (hits are
+		# judged here), while what the host SEES slides smoothly like everyone else.
+		global_position = pos
+		rotation.y = yaw
 	if new_form != form or new_role != role:
 		form = new_form
 		role = new_role
@@ -94,17 +113,42 @@ func _rebuild() -> void:
 		h = Bodies.height_for(role)
 	_shape.position.y = h / 2.0
 	add_child(_visual)
-	_nameplate.position.y = h + 0.35
+	_plate_h = h + 0.35
+	_nameplate.position = Vector3(0, _plate_h, 0)
 	_nameplate.text = player_name
 	_nameplate.modulate = Color(1.0, 0.92, 0.6) if role == "angel" else Color(1.0, 0.5, 0.45)
 
 
-func _physics_process(delta: float) -> void:
-	if not _has_state or snap:
+# Where this player was INTERP_DELAY seconds ago, between the two updates around then.
+func _smoothed() -> Array:
+	var rt := Time.get_ticks_msec() / 1000.0 - INTERP_DELAY
+	if _snaps.size() == 1 or rt <= _snaps[0][0]:
+		return [_snaps[0][1], _snaps[0][2]]
+	for i in range(_snaps.size() - 1, 0, -1):
+		var a: Array = _snaps[i - 1]
+		var b: Array = _snaps[i]
+		if rt >= a[0]:
+			if rt >= b[0]:
+				return [b[1], b[2]]   # nothing newer yet: hold the latest
+			var f: float = (rt - a[0]) / maxf(b[0] - a[0], 0.001)
+			return [(a[1] as Vector3).lerp(b[1], f), lerp_angle(a[2], b[2], f)]
+	return [_snaps[-1][1], _snaps[-1][2]]
+
+
+func _physics_process(_delta: float) -> void:
+	if not _has_state or _snaps.is_empty():
 		return
-	var w := 1.0 - exp(-15.0 * delta)   # smooth out network jitter
-	global_position = global_position.lerp(_target_pos, w)
-	rotation.y = lerp_angle(rotation.y, _target_yaw, w)
+	var sm := _smoothed()
+	if snap:
+		# Host: only the look is smoothed; the body stays exact for hit checks.
+		if _visual:
+			_visual.top_level = true
+			_visual.global_position = sm[0]
+			_visual.global_rotation = Vector3(0, sm[1], 0)
+			_nameplate.global_position = sm[0] + Vector3.UP * _plate_h
+		return
+	global_position = sm[0]
+	rotation.y = sm[1]
 
 
 func play_taunt(taunt_name: String) -> void:
@@ -114,10 +158,10 @@ func play_taunt(taunt_name: String) -> void:
 
 
 # Host only: a real projectile hit this player.
-func take_hit(damage: int) -> bool:
+func take_hit(damage: int, by: Node = null) -> bool:
 	if net == null or role != "demon":
 		return false
-	return net.on_remote_hit(self, damage)
+	return net.on_remote_hit(self, damage, by)
 
 
 # Host only: a projectile this player threw hit a demon.

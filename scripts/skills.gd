@@ -24,7 +24,7 @@ const SKILLS := {
 	"fly": {"team": "demon", "label": "Fly", "cooldown": 0.0, "hold": true,
 		"desc": "Hold the key to rise, spending Hatred (about 5-6 seconds from full). Let go and you fall. No fall damage."},
 	"fire": {"team": "demon", "label": "Hellfire", "cooldown": 2.0, "hatred": 35.0,
-		"desc": "Fling a fireball that leaves a patch of fire for 6 seconds. Angels caught in it are slowed and their blessings burn away. Costs Hatred, and the fireball shows where it came from."},
+		"desc": "Fling a fireball from your hands; where it lands, fire burns for 6 seconds. Angels caught in it are slowed, stagger about, can barely see straight and their blessings burn away. Costs Hatred, and the fireball shows where it came from."},
 	"possess": {"team": "demon", "label": "Possess", "cooldown": 1.5,
 		"desc": "Become a real prop instead of a copy (press its key while aiming at the prop). The one you leave behind slowly dissolves."},
 }
@@ -53,7 +53,10 @@ const KICK_DAMAGE := 5
 const STOMP_SPEED := 30.0
 const STOMP_RADIUS := 4.0
 const STOMP_DAMAGE := 15
-const FIRE_RANGE := 15.0
+const FIRE_THROW_SPEED := 16.0   # flung from the demon's hands...
+const FIRE_THROW_UP := 2.5
+const FIRE_GRAVITY := 14.0        # ...in an arc: lands roughly 8-15 m away
+const FIRE_LINGER := 2.0          # seconds you keep burning (and staggering) after stepping out
 const FIRE_RADIUS := 1.8
 const FIRE_LIFETIME := 6.0
 const FIRE_SLOW := 0.6            # angels in fire move at 60% speed
