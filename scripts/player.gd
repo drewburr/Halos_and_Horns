@@ -133,6 +133,7 @@ var _momentum_ref := 0.0       # how much momentum the dash gave us (turn costs 
 var _steer_local := Vector2.ZERO   # last direction steered, relative to where we face
 var _pull_target := Vector3.ZERO
 var _pull_time := 0.0
+var minion: Node3D = null     # our decoy, if we have one out (main creates it)
 var burning := 0.0            # seconds left standing in demon fire (main refreshes it)
 var _move_dir := Vector2.ZERO # last movement keys held (Holy Leap launches that way)
 var _leaping := false         # in the air from Holy Leap: strong steering, Cloud Stomp ready
@@ -232,6 +233,33 @@ func _apply_camera() -> void:
 		visual_root.visible = true
 
 
+func look(mouse_move: Vector2) -> void:
+	var turn: float = -mouse_move.x * MOUSE_SENSITIVITY
+	if _free_looking():
+		pivot.rotation.y = wrapf(pivot.rotation.y + turn, -PI, PI)   # only the camera swings round
+	else:
+		rotate_y(turn)                                                # you (or your prop) turn too
+	pivot.rotation.x = clampf(pivot.rotation.x - mouse_move.y * MOUSE_SENSITIVITY, -1.4, 1.2)
+
+
+# Looking around without turning:
+# - demons do it by default (the camera orbits you); hold Shift and your body or
+#   prop turns along with the view.
+# - angels turn with the mouse like any shooter (so the crosshair stays true);
+#   hold Alt to look around without turning.
+func _free_looking() -> bool:
+	if role == "demon":
+		return not Input.is_action_pressed("run")
+	return Input.is_action_pressed("free_look")
+
+
+# Which way the movement keys push: demons move relative to the camera (so you
+# can glide your view while strafing); angels relative to their body.
+func move_basis() -> Basis:
+	var yaw := rotation.y + (pivot.rotation.y if role == "demon" else 0.0)
+	return Basis(Vector3.UP, yaw)
+
+
 func toggle_view() -> void:
 	first_person[role] = not first_person[role]
 	_apply_camera()
@@ -248,8 +276,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
 		return
 	if event is InputEventMouseMotion:
-		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
-		pivot.rotation.x = clampf(pivot.rotation.x - event.relative.y * MOUSE_SENSITIVITY, -1.4, 1.2)
+		look(event.relative)
 		return
 	if event.is_action_pressed("toggle_view"):
 		toggle_view()
@@ -326,6 +353,8 @@ func _physics_process(delta: float) -> void:
 		var lurch := Vector2(1.3 * sin(tt * 2.1) + 0.6 * sin(tt * 7.3 + 1.3), 0.6 * sin(tt * 4.3 + 2.0))
 		input_dir = (input_dir + lurch).limit_length(1.0)
 	_move_dir = input_dir
+	_steer_minion()
+	_settle_view(delta, input_dir)
 
 	# Hatred always refills; flying spends it faster than it refills (unless boosted).
 	if role == "demon":
@@ -365,7 +394,7 @@ func _physics_process(delta: float) -> void:
 
 		_update_sprint(delta, want_run and not sneaking and input_dir != Vector2.ZERO)
 
-		var direction := global_transform.basis * Vector3(input_dir.x, 0.0, input_dir.y)
+		var direction := move_basis() * Vector3(input_dir.x, 0.0, input_dir.y)
 		direction.y = 0.0
 		direction = direction.normalized()
 		var speed := ANGEL_SPEED if role == "angel" else PropLib.speed(possessed_type)
@@ -471,7 +500,7 @@ func _update_dash_momentum(delta: float, input_dir: Vector2, on_floor: bool) -> 
 		return
 	if input_dir != Vector2.ZERO:
 		_steer_local = input_dir.normalized()
-	var steer3 := global_transform.basis * Vector3(_steer_local.x, 0.0, _steer_local.y)
+	var steer3 := move_basis() * Vector3(_steer_local.x, 0.0, _steer_local.y)
 	var steer := Vector2(steer3.x, steer3.z).normalized()
 	var turned := absf(_momentum.angle_to(steer))
 	if turned > 0.0001:
@@ -535,6 +564,12 @@ func use_skill(slot: int) -> bool:
 	var point := Vector3.ZERO
 	var index := -1
 	match id:
+		"minion":
+			if is_instance_valid(minion):
+				return false            # one at a time; holding the key steers it
+			hatred -= Skills.hatred_cost(id)
+			var side := global_transform.basis.x
+			point = global_position + Vector3(side.x, 0.0, side.z).normalized() * 1.3
 		"possess":
 			if not is_instance_valid(_hover_prop) or not _hover_prop.has_meta("prop_index"):
 				return false
@@ -560,7 +595,7 @@ func use_skill(slot: int) -> bool:
 			if not is_on_floor():
 				return false
 			# Launch the way you're holding (or forward), then steer hard in the air.
-			var push := global_transform.basis * Vector3(_move_dir.x, 0.0, _move_dir.y)
+			var push := move_basis() * Vector3(_move_dir.x, 0.0, _move_dir.y)
 			push.y = 0.0
 			if push.length() < 0.1:
 				push = -global_transform.basis.z
@@ -789,6 +824,36 @@ func _shoot() -> void:
 	_throw_cooldown = THROW_COOLDOWN
 	threw.emit(blessing)
 	launched.emit(start, p.velocity, blessing, p.gravity, throw_seq)
+
+
+func _settle_view(delta: float, input_dir: Vector2) -> void:
+	if role == "angel":
+		# Let go of Alt: the view swings back to straight ahead.
+		if not Input.is_action_pressed("free_look") and pivot.rotation.y != 0.0:
+			pivot.rotation.y = lerp_angle(pivot.rotation.y, 0.0, minf(12.0 * delta, 1.0))
+			if absf(pivot.rotation.y) < 0.002:
+				pivot.rotation.y = 0.0
+	elif possessed_type == "" and input_dir != Vector2.ZERO and not frozen:
+		# A demon in its own body turns to face where it's walking; the camera stays put.
+		var walk := move_basis() * Vector3(input_dir.x, 0.0, input_dir.y)
+		var face := atan2(-walk.x, -walk.z)
+		var new_yaw := lerp_angle(rotation.y, face, minf(10.0 * delta, 1.0))
+		pivot.rotation.y = wrapf(pivot.rotation.y - wrapf(new_yaw - rotation.y, -PI, PI), -PI, PI)
+		rotation.y = new_yaw
+
+
+# Holding the Minion key: it walks to the ground under the crosshair.
+func _steer_minion() -> void:
+	if not is_instance_valid(minion):
+		return
+	var held: bool = _hold_key_down("minion") if test_input.is_empty() else test_input.get("minion", false)
+	if held and not frozen:
+		var hit := _aim_ray(80.0)
+		if not hit.is_empty():
+			minion.steering = true
+			minion.walk_to(hit["position"])
+	elif minion.steering:
+		minion.stop()
 
 
 # No standing on other players' heads (angels, or demons in their own body), or on

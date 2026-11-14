@@ -3,13 +3,13 @@
 A free, non-commercial prop-hunt game: demons possess everyday objects to hide, angels hunt them down.
 Passion project, inspired by Witch It.
 
-## Status: version 0.4.3, Redemption
+## Status: version 0.4.4, Minions
 
 One small test map, placeholder shapes for everything.
 
 - **Practice:** single player. The angel side hunts 3 test demons (they hop and taunt so you can find them); the demon side is a sandbox for possessing props.
 - **Online:** one player hosts, friends join by address. Mobification rules: caught demons are redeemed and switch to the angels. About one angel per three players.
-- **Skills:** pick 2 per side on the main menu or in the lobby. Angels: Flying Dash (dash where you look or the way your keys point, up into the air too; you keep the momentum until you turn: wide turns cost a little, a quick 180 or a strafe kills it), Alarm Cherub (thrown), Vacuum Orb, Holy Leap (steer it in the air; press its key again mid-air to Cloud Stomp), Holy Scripture (a heavy book, big holy damage), Holy Kick (boot a demon away). Demons: Possess, Fly, Hellfire (costs Hatred; angels in the fire are slowed and their blessings burn away).
+- **Skills:** pick 2 per side on the main menu or in the lobby. Angels: Flying Dash (dash where you look or the way your keys point, up into the air too; you keep the momentum until you turn: wide turns cost a little, a quick 180 or a strafe kills it), Alarm Cherub (thrown), Vacuum Orb, Holy Leap (steer it in the air; press its key again mid-air to Cloud Stomp), Holy Scripture (a heavy book, big holy damage), Holy Kick (boot a demon away). Demons: Possess, Fly, Minion (a decoy you steer by holding its key: it walks to the ground under your crosshair, moves like a real player and takes hits like one), Hellfire (costs Hatred; angels in the fire are slowed and their blessings burn away).
 - **Demons** can **transform** into a copy of any prop (click), or with skills **become** the real one (Possess) and **fly** (hold the key: you rise while Hatred lasts, gravity brings you down; no fall damage).
 - The Alarm Cherub just hovers there tooting its little horn until a demon comes close; then it blasts the horn and shows its detection bubble. Shoot it with a blessing to send it flying down a hallway.
 - **The shrine:** one per map, the only place to swap skills mid-round. Press G there; a swap takes 3 seconds in total, you can't move while at it, demons have to leave their prop first, and the shrine flares up so everyone knows someone is there. Fresh skills start on cooldown.
@@ -71,6 +71,7 @@ Both builds are also made automatically: publishing a release on GitHub runs [th
 | Right click | Skill 2 | Skill 2 |
 | F | Melee | |
 | (hold the key) | | Fly, if it's one of your skills: rise while held, fall when let go |
+| Mouse | Turn (hold **Alt** to look around without turning) | The camera swings around you (hold **Shift** and your body or prop turns with the view) |
 | T | First/third person | First/third person |
 | B | Change blessing type (testing) | |
 | G | Swap skills (at the shrine) | Swap skills (at the shrine, in demon form) |

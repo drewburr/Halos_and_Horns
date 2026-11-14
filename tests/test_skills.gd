@@ -37,6 +37,7 @@ func aim_at(player, target: Node3D, aim_height: float, dist := 3.5) -> bool:
 		player.global_position = spot + Vector3.UP * 0.1
 		player.velocity = Vector3.ZERO
 		player.look_at(Vector3(aim_point.x, player.global_position.y, aim_point.z))
+		player.pivot.rotation.y = 0.0
 		await frames(2)
 		for pass_num in 4:
 			var eye: Vector3 = player.camera.global_position
@@ -638,6 +639,55 @@ func _run() -> void:
 	check(player.hatred < 70.0, "...costs Hatred (%.0f left)" % player.hatred)
 	await frames(5)
 	check(main.fires.size() > fires_before, "...and lights a fire")
+
+	# Camera: a demon's mouse swings the camera around it; an angel's turns the angel.
+	var swing := Vector2(150, 0)
+	var body_yaw: float = player.rotation.y
+	var cam_yaw: float = player.pivot.rotation.y
+	player.look(swing)
+	check(is_equal_approx(player.rotation.y, body_yaw) and not is_equal_approx(player.pivot.rotation.y, cam_yaw),
+			"demon: the mouse swings the camera around you without turning you")
+	player.pivot.rotation.y = 0.0
+
+	# Minion: press to make one, hold to steer it, it has a demon's health.
+	main.round_root.get_children().filter(func(n): return n is CharacterBody3D and n.get("life") != null).map(func(n): n.queue_free())
+	player.global_position = clear_lane(Vector3(0, 0.1, 15), Vector3(0, 0, -1), 10.0)
+	player.velocity = Vector3.ZERO
+	player.rotation = Vector3.ZERO
+	player.loadout["demon"] = ["minion", "fly"]
+	player.skill_cd.clear()
+	player.hatred = 100.0
+	await frames(5)
+	check(player.use_skill(0), "Minion")
+	check(is_instance_valid(player.minion), "...a decoy of you appears")
+	check(player.hatred < 75.0, "...costs Hatred")
+	check(not player.use_skill(0), "...only one at a time")
+	await frames(10)
+	var m = player.minion
+	if is_instance_valid(m):
+		var m_start: Vector3 = m.global_position
+		player.pivot.rotation.x = -0.45            # crosshair on the ground a few metres ahead
+		player.test_input = {"minion": true}
+		await frames(70)
+		player.test_input = {}
+		var walked_m := Vector2(m.global_position.x - m_start.x, m.global_position.z - m_start.z).length()
+		check(walked_m > 2.0, "...holding the key steers it to the ground under your crosshair (%.1f m)" % walked_m)
+		check(m.velocity.length() < PropLib.speed("") + 0.5, "...no faster than a real demon")
+		await frames(30)
+		check(not m.steering, "...let go and it stops steering")
+		var hits_to_pop := 0
+		while is_instance_valid(m) and not m.is_queued_for_deletion() and hits_to_pop < 10:
+			m.take_hit(25, null)
+			hits_to_pop += 1
+		check(hits_to_pop == int(ceil(PropLib.max_hp("") / 25.0)), "...takes as many hits as a real demon before popping (%d)" % hits_to_pop)
+	player.pivot.rotation.x = 0.0
+
+	# Angels: the mouse turns you (unless you hold Alt).
+	player.set_role("angel")
+	body_yaw = player.rotation.y
+	player.look(swing)
+	check(not is_equal_approx(player.rotation.y, body_yaw) and is_zero_approx(player.pivot.rotation.y),
+			"angel: the mouse turns you, so the crosshair stays true")
 
 	# The shrine: the only place to swap skills mid-round, and it takes 3 s in total.
 	main.state = main.State.HUNTING

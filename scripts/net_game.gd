@@ -319,6 +319,7 @@ func start_round() -> void:
 		return
 	round_seed = randi()
 	_used_eids.clear()
+	minions.clear()
 	_clear_remotes()
 	var ids := peers.keys()
 	ids.shuffle()
@@ -388,6 +389,10 @@ func _roster_for(viewer_id: int) -> Array:
 			continue
 		var shown_name: String = rec["name"] if rec["role"] == viewer_role and viewer_role == "angel" else ""
 		roster.append([rec["eid"], shown_name, rec["role"]])
+	# Minions are listed just like any demon (no name), so nothing gives them away.
+	for owner in minions:
+		if owner != viewer_id:
+			roster.append([minions[owner]["eid"], "", "demon"])
 	return roster
 
 
@@ -498,6 +503,7 @@ func _back_to_lobby() -> void:
 	phase = "lobby"
 	for id in peers:
 		peers[id]["in_round"] = false
+	minions.clear()
 	_clear_remotes()
 	_broadcast_lobby()
 	for id in _client_ids():
@@ -538,6 +544,12 @@ func _host_tick(delta: float) -> void:
 		me["yaw"] = main.player.shown_yaw()
 		me["form"] = main.player.possessed_type
 		_record_history(1, me["pos"])
+	if minions.has(1) and is_instance_valid(main.player.minion):
+		minions[1]["pos"] = main.player.minion.global_position
+		minions[1]["yaw"] = main.player.minion.rotation.y
+	for owner in minions.keys():
+		if now() > minions[owner]["until"]:
+			_minion_gone(owner, true)
 	_relay_accum += delta
 	if _relay_accum >= 1.0 / RELAY_RATE:
 		_relay_accum = 0.0
@@ -554,6 +566,10 @@ func _relay_states() -> void:
 			if id == viewer or not rec["in_round"]:
 				continue
 			states.append([rec["eid"], rec["pos"], rec["yaw"], rec["form"], rec["role"]])
+		for owner in minions:
+			if owner != viewer:
+				var m: Dictionary = minions[owner]
+				states.append([m["eid"], m["pos"], m["yaw"], m["form"], "demon"])
 		s_states.rpc_id(viewer, states)
 
 
@@ -624,6 +640,8 @@ func _client_tick(delta: float) -> void:
 		_send_accum = 0.0
 		var p = main.player
 		c_state.rpc_id(1, p.global_position, p.shown_yaw(), p.possessed_type, p.flying)
+		if is_instance_valid(p.minion):
+			c_minion_state.rpc_id(1, p.minion.global_position, p.minion.rotation.y)
 
 
 # ---------------- movement checks (host) ----------------
@@ -844,6 +862,18 @@ func c_hit_claim(seq: int, eid: int, point: Vector3) -> void:
 		why = "no such throw"
 	elif entry["used"]:
 		why = "that throw already hit"
+	elif _minion_owner(eid) != 0:
+		# A minion: same path and wall checks, and it must have been near there.
+		t_fly = _time_on_path(entry, point)
+		var mpos: Vector3 = minions[_minion_owner(eid)]["pos"]
+		if t_fly < 0.0 or not _path_clear(entry, t_fly, id, 0) or Vector2(point.x - mpos.x, point.z - mpos.z).length() > 3.0:
+			why = "missed the minion"
+		else:
+			entry["used"] = true
+			if minion_hit(_minion_owner(eid), null, Projectile.DAMAGE):
+				rec["hits"] += 1
+				s_hit_confirm.rpc_id(id)
+			return
 	elif target == 0 or target == id or peers[target]["role"] != "demon":
 		why = "not a demon"
 	else:
@@ -934,9 +964,103 @@ func _peer_for_eid(eid: int) -> int:
 	return 0
 
 
-# A host projectile hit a joined player.
+# A host projectile hit a joined player (or a minion).
 func on_remote_hit(remote, damage: int, by: Node = null) -> bool:
+	var owner := _minion_owner(remote.eid)
+	if owner != 0:
+		return minion_hit(owner, by, damage)
 	return damage_player(_peer_for_eid(remote.eid), damage, peer_of(by))
+
+
+# ---------------- Minions ----------------
+# The demon who made it runs it and sends us where it is; we show it to everyone
+# else exactly like a player (random id, no name, role demon, in the roster).
+
+var minions := {}   # owner's peer id -> {eid, pos, yaw, form, hp, until, last_time}
+
+
+func _minion_owner(eid: int) -> int:
+	for owner in minions:
+		if minions[owner]["eid"] == eid:
+			return owner
+	return 0
+
+
+func minion_spawned(owner: int, point: Vector3) -> void:
+	if not peers.has(owner):
+		return
+	if minions.has(owner):
+		_minion_gone(owner, true)
+	var rec: Dictionary = peers[owner]
+	var m := {"eid": _new_eid(), "pos": main.ground_below(point + Vector3.UP), "yaw": rec["yaw"],
+		"form": rec["form"], "hp": PropLib.max_hp(rec["form"]), "until": now() + Skills.MINION_LIFETIME, "last_time": now()}
+	minions[owner] = m
+	if owner != 1:
+		var r := _get_or_make_remote(m["eid"])
+		r.net = self
+		r.snap = true
+		r.apply_state(m["pos"], m["yaw"], m["form"], "demon")
+	_send_rosters()
+	print("[host] %s sent out a minion" % rec["name"])
+
+
+@rpc("any_peer", "call_remote", "unreliable_ordered")
+func c_minion_state(pos: Vector3, yaw: float) -> void:
+	if not is_host:
+		return
+	var id := multiplayer.get_remote_sender_id()
+	if not minions.has(id):
+		return
+	var m: Dictionary = minions[id]
+	var t := now()
+	var dt := clampf(t - m["last_time"], 1.0 / SEND_RATE, 1.0)
+	var flat := Vector2(pos.x - m["pos"].x, pos.z - m["pos"].z).length()
+	# Same speed limit as the form it copies (it's not allowed to be a cheat-mobile).
+	if flat > PropLib.speed(m["form"]) * 1.6 * dt + 1.0 or not _in_bounds(pos):
+		return
+	m["last_time"] = t
+	m["pos"] = pos
+	m["yaw"] = yaw
+	if remotes.has(m["eid"]):
+		remotes[m["eid"]].apply_state(pos, yaw, m["form"], "demon")
+
+
+# An angel hit a minion: same hit marker and sound as hitting a real demon, and
+# it has the same health a real demon in that form would. Nobody is actually hurt.
+func minion_hit(owner: int, _by: Node, damage: int) -> bool:
+	if not minions.has(owner) or phase != "hunting":
+		return false
+	var m: Dictionary = minions[owner]
+	m["hp"] -= damage
+	print("[host] a minion was hit")
+	if m["hp"] <= 0:
+		_minion_gone(owner, true)
+	return true
+
+
+func _minion_gone(owner: int, popped: bool) -> void:
+	if not minions.has(owner):
+		return
+	var m: Dictionary = minions[owner]
+	minions.erase(owner)
+	if popped:
+		main.broadcast_fx("minion_pop", [m["pos"]])
+	_remove_remote(m["eid"])
+	for id in _client_ids():
+		s_remove.rpc_id(id, m["eid"])
+	if owner == 1:
+		if is_instance_valid(main.player.minion):
+			main.player.minion.queue_free()
+	elif peers.has(owner):
+		s_minion_gone.rpc_id(owner)
+	_send_rosters()
+	print("[host] a minion popped")
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_minion_gone() -> void:
+	if is_instance_valid(main.player.minion):
+		main.player.minion.queue_free()
 
 
 # Which player a body belongs to (0 if none): our own player is the host (1).
@@ -1352,6 +1476,12 @@ func demon_nodes() -> Array:
 			out.append(main.player)
 		elif remotes.has(rec["eid"]):
 			out.append(remotes[rec["eid"]])
+	# Minions count as demons for anything that looks for demons nearby.
+	for owner in minions:
+		if owner == 1 and is_instance_valid(main.player.minion):
+			out.append(main.player.minion)
+		elif remotes.has(minions[owner]["eid"]):
+			out.append(remotes[minions[owner]["eid"]])
 	return out
 
 

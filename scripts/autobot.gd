@@ -42,6 +42,7 @@ func log_line(text: String) -> void:
 
 func _physics_process(delta: float) -> void:
 	var p = main.player
+	p.pivot.rotation.y = 0.0   # bots never look around separately from where they face
 	if not _connected:
 		_connected = true
 		p.hit_confirmed.connect(func(): _misses = 0)
@@ -137,6 +138,7 @@ func _play_demon(delta: float, p) -> void:
 	if _hidden:
 		p.test_input = {}
 		_try_fire(p)
+		_try_minion(p, delta)
 		return
 	_fly_time += delta
 	if _fly_time < 0.8:
@@ -175,6 +177,24 @@ func _play_demon(delta: float, p) -> void:
 	log_line("hiding as a copy of a " + p.possessed_type)
 
 
+# Hidden demon with Minion: once the hunt is on, send one out and steer it for a bit.
+var _minion_steer := 0.0
+
+
+func _try_minion(p, delta: float) -> void:
+	var slot: int = p.loadout["demon"].find("minion")
+	if slot < 0 or main.state != main.State.HUNTING:
+		return
+	if _minion_steer > 0.0:
+		_minion_steer -= delta
+		p.pivot.rotation.x = -0.45     # steer toward the ground a few metres ahead
+		p.test_input = {"minion": true}
+		return
+	if not _used.has("minion") and p.use_skill(slot):
+		_log_once("minion")
+		_minion_steer = 2.5
+
+
 # Hidden demon with Hellfire: once the hunt is on, fling it at a nearby angel.
 func _try_fire(p) -> void:
 	var slot: int = p.loadout["demon"].find("fire")
@@ -192,6 +212,7 @@ func _try_fire(p) -> void:
 func _aim(p, point: Vector3) -> void:
 	var to: Vector3 = point - p.global_position
 	p.rotation.y = atan2(-to.x, -to.z)
+	p.pivot.rotation.y = 0.0
 	var eye: Vector3 = p.camera.global_position
 	var flat := Vector2(point.x - eye.x, point.z - eye.z).length()
 	p.pivot.rotation.x = clampf(atan2(point.y - eye.y, flat), -1.4, 1.2)

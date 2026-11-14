@@ -16,6 +16,7 @@ const Autobot = preload("res://scripts/autobot.gd")
 const Skills = preload("res://scripts/skills.gd")
 const Cherub = preload("res://scripts/cherub.gd")
 const Fire = preload("res://scripts/fire.gd")
+const Minion = preload("res://scripts/minion.gd")
 const Shrine = preload("res://scripts/shrine.gd")
 const SHRINE_POS := Vector3(-20, 0, 4)   # the one shrine on this map
 const Vortex = preload("res://scripts/vortex.gd")
@@ -222,6 +223,7 @@ func _setup_input() -> void:
 	_add_key("run", KEY_SHIFT)
 	_add_key("sneak", KEY_CTRL)
 	_add_key("toggle_view", KEY_T)
+	_add_key("free_look", KEY_ALT)
 	_add_key("cycle_blessing", KEY_B)
 	_add_key("switch_role", KEY_F2)
 	_add_key("scoreboard", KEY_TAB)
@@ -1299,6 +1301,8 @@ func is_authority() -> bool:
 
 
 func _on_player_skill(id: String, origin: Vector3, dir: Vector3, point: Vector3, index: int) -> void:
+	if id == "minion":
+		_spawn_my_minion(point)
 	if mode == "practice":
 		authority_skill(player, 0, id, origin, dir, point, index)
 	elif net:
@@ -1307,6 +1311,30 @@ func _on_player_skill(id: String, origin: Vector3, dir: Vector3, point: Vector3,
 		if id == "scripture" and not net.is_host:
 			_spawn_scripture(origin, dir, true)
 		net.on_local_skill(id, origin, dir, point, index)
+
+
+# Our own decoy: we run it (we steer it); the host shows it to everyone else.
+func _spawn_my_minion(at: Vector3) -> void:
+	if is_instance_valid(player.minion):
+		player.minion.queue_free()
+	var m := Minion.new()
+	m.form = player.possessed_type
+	m.fall_gravity = player.gravity * player.tuning["gravity_scale"]
+	m.jump_velocity = player.tuning["jump_velocity"]
+	round_root.add_child(m)
+	m.global_position = ground_below(at + Vector3.UP * 1.0)
+	m.rotation.y = player.shown_yaw()
+	player.minion = m
+	if mode == "practice":
+		# Practice: hits come straight here; it has the health of the form it copies.
+		var hp := [PropLib.max_hp(m.form)]
+		m.on_hit = func(_by, damage):
+			hp[0] -= damage
+			if hp[0] <= 0 and is_instance_valid(m):
+				m.pop()
+			return true
+	elif net and net.is_host:
+		m.on_hit = func(by, damage): return net.minion_hit(1, by, damage)
 
 
 func _on_player_melee(origin: Vector3, dir: Vector3) -> void:
@@ -1355,6 +1383,9 @@ func demon_targets() -> Array:
 func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, dir: Vector3,
 		point: Vector3, index: int) -> void:
 	match id:
+		"minion":
+			if net and net.is_host:
+				net.minion_spawned(user_key, point)
 		"cherub":
 			# Thrown from the angel's hands; where it ends up is up to physics.
 			_cherub_counter += 1
@@ -1669,6 +1700,8 @@ func fx(kind: String, args: Array) -> void:
 			fires[args[0]] = f
 		"kick":
 			Effects.puff(_fx_parent(), args[0], Color(1.0, 0.95, 0.6, 0.8), 1.2)
+		"minion_pop":
+			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.6, Color(0.35, 0.05, 0.08, 0.8), 1.6)
 		"stomp":
 			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.2, Color(1.0, 1.0, 1.0, 0.75), Skills.STOMP_RADIUS * 1.5)
 			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.6, Color(1.0, 0.95, 0.7, 0.6), 2.0)

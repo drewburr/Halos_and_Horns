@@ -34,6 +34,7 @@ func aim_at(player: CharacterBody3D, target: Node3D, aim_height: float) -> bool:
 		player.global_position = spot + Vector3.UP * 0.1
 		player.velocity = Vector3.ZERO
 		player.look_at(Vector3(aim_point.x, player.global_position.y, aim_point.z))
+		player.pivot.rotation.y = 0.0
 		await frames(2)
 		# The demon camera swings on its arm when it tilts, so re-aim a few times.
 		for pass_num in 4:

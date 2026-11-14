@@ -18,7 +18,7 @@ for n in Wife Brother Squirrel Oddy; do
 	[ "$n" = "Oddy" ] && extra="--cheat=teleport,fly"
 	[ "$n" = "Wife" ] && extra="--skills=cherub,vacuum --say=hello_everyone --cheat=claim"
 	[ "$n" = "Squirrel" ] && extra="--skills=dash,leap"
-	[ "$n" = "Brother" ] && extra="--skills=fire,fly --sayteam=demons_only_secret"
+	[ "$n" = "Brother" ] && extra="--skills=fire,minion --sayteam=demons_only_secret"
 	timeout 240 "$GODOT" --headless -- --join=127.0.0.1 --name=$n --autobot --quit-after-round $extra > "$OUT/$n.log" 2>&1 &
 	sleep 0.5
 done
@@ -39,7 +39,7 @@ for n in Wife Brother Squirrel Oddy; do
 done
 check "flying without Hatred was caught" "grep -q 'blocked Oddy: flying without enough Hatred' '$OUT/host.log'"
 check "no false alarms (only Oddy was flagged)" "! grep '^\\[host\\] blocked' '$OUT/host.log' | grep -qv 'blocked Oddy'"
-check "demons flew" "grep -q 'flying' '$OUT/Brother.log'"
+check "demons flew" "grep -q 'flying' '$OUT/Brother.log' || grep -q 'flying' '$OUT/Theo.log'"
 check "a demon possessed a real prop" "grep -q 'a demon possessed a' '$OUT/host.log'"
 check "an angel dropped an Alarm Cherub" "grep -q 'cherub dropped' '$OUT/host.log'"
 check "an angel threw a Vacuum Orb" "grep -q 'vacuum orb' '$OUT/host.log'"
@@ -77,6 +77,9 @@ check "a made-up hit claim is refused" "grep -q \"refused Wife's hit claim\" '$O
 check "everyone hears who redeemed whom" "grep -qE '\\[news\\] [A-Za-z]+ redeemed [A-Za-z]+!' '$OUT/Wife.log'"
 if [ $(grep -c 'was caught' "$OUT/host.log") -ge 2 ]; then
 	check "everyone hears who the last demon is" "grep -q 'LAST demon standing' '$OUT/Squirrel.log'"
+fi
+if grep -q 'used minion' "$OUT/Brother.log"; then
+	check "a demon sent out a minion and the host showed it to everyone" "grep -q 'Brother sent out a minion' '$OUT/host.log'"
 fi
 check "no player script errors" "! grep -q 'SCRIPT ERROR' '$OUT'/*.log"
 
