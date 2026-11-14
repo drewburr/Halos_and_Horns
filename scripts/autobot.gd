@@ -106,6 +106,12 @@ func _physics_process(delta: float) -> void:
 		_taunt_timer = randf_range(6.0, 10.0)
 		p._taunt_cooldown = 0.0
 		p.taunt(randf() < 0.3)
+	if main.state == main.State.HIDING and _role_time > 1.5 and not _used.has("chat"):
+		_used["chat"] = true
+		if options.has("say"):
+			main.net.send_chat(options["say"], false)
+		if options.has("sayteam"):
+			main.net.send_chat(options["sayteam"], true)
 	if "teleport" in options.get("cheat", "") and not _cheat_done and main.state == main.State.HIDING \
 			and _role_time > 1.0:
 		_cheat_done = true

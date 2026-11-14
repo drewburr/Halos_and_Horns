@@ -29,7 +29,7 @@ const POSSESS_REACH := 6.0        # how far past the camera a demon can possess
 const THIRD_PERSON_DISTANCE := 3.5
 const HOLD_TO_RETURN := 0.6       # seconds to hold left click to leave a prop
 const BODY_HEIGHT := Bodies.BODY_HEIGHT
-const SHOULDER_OFFSET := 0.7      # third-person camera sits over the right shoulder
+const CAMERA_ABOVE_HEAD := 0.45   # third person: centered behind you, crosshair just above your head
 const OUTLINE_COLOR := Color(1.0, 0.35, 0.1)
 const RUN_MULTIPLIER := 1.6       # Shift
 const SNEAK_MULTIPLIER := 0.45    # Ctrl
@@ -208,9 +208,10 @@ func _apply_camera() -> void:
 		spring.spring_length = 0.0
 		visual_root.visible = false
 	else:
-		# Over the shoulder and above the head, so our own body never covers the crosshair.
-		pivot.position.y = maxf(_form_height, 0.6) + 0.35
-		spring.position.x = SHOULDER_OFFSET
+		# Straight behind you (centered), with the crosshair a little above your head,
+		# so your own body sits just under it instead of covering it.
+		pivot.position.y = maxf(_form_height, 0.6) + CAMERA_ABOVE_HEAD
+		spring.position.x = 0.0
 		spring.spring_length = THIRD_PERSON_DISTANCE
 		visual_root.visible = true
 
@@ -480,9 +481,6 @@ func use_skill(slot: int) -> bool:
 				_grapple_target = point - dir * 0.5
 				_grapple_time = global_position.distance_to(_grapple_target) / Skills.GRAPPLE_SPEED + 0.3
 				_pull_time = 0.0
-		"cherub":
-			var hit := _aim_ray(Skills.CHERUB_RANGE)
-			point = hit["position"] if not hit.is_empty() else origin + dir * Skills.CHERUB_RANGE
 		"vacuum":
 			point = origin + dir
 		"leap":
@@ -498,6 +496,9 @@ func use_skill(slot: int) -> bool:
 			velocity.x = flat.x
 			velocity.z = flat.z
 			_leaping = true
+		"kick":
+			origin = pivot.global_position     # reach is measured from us, not the camera
+			Effects.swing(get_parent(), origin - Vector3.UP * 0.8, dir)
 		"fire":
 			var hit := _aim_ray(Skills.FIRE_RANGE)
 			point = hit["position"] if not hit.is_empty() else origin + dir * Skills.FIRE_RANGE
@@ -511,7 +512,7 @@ func melee() -> bool:
 	if melee_cd > 0.0 or frozen or role != "angel":
 		return false
 	melee_cd = Skills.MELEE_COOLDOWN
-	var origin := camera.global_position
+	var origin := pivot.global_position   # on the crosshair line in both views, at our own head
 	var dir := -camera.global_transform.basis.z
 	Effects.swing(get_parent(), origin - Vector3.UP * 0.3, dir)
 	melee_used.emit(origin, dir)

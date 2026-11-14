@@ -20,7 +20,7 @@ const Skills = preload("res://scripts/skills.gd")
 const PROTOCOL_VERSION := 5      # (old) kept for reference; joining now checks GAME_BUILD
 # Every release gets a new number here, and only the exact same build can join.
 # (Sent where older versions sent PROTOCOL_VERSION, so they get a clear message too.)
-const GAME_BUILD := 400
+const GAME_BUILD := 410
 const DEFAULT_PORT := 7777
 const MAX_PLAYERS := 16
 const SEND_RATE := 30.0          # joined players report their position this many times a second
@@ -861,6 +861,106 @@ func c_loadout(angel: Array, demon: Array) -> void:
 	peers[id]["loadout"] = {"angel": Skills.clean_loadout("angel", angel), "demon": Skills.clean_loadout("demon", demon)}
 
 
+# ---------------- the shrine (mid-round skill swaps) ----------------
+
+func shrine_open() -> void:
+	if is_host:
+		_shrine_open(1)
+	else:
+		c_shrine_open.rpc_id(1)
+
+
+func shrine_swap(skills: Array) -> void:
+	if is_host:
+		_shrine_swap(1, skills)
+	else:
+		c_shrine_swap.rpc_id(1, skills)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_shrine_open() -> void:
+	if is_host:
+		_shrine_open(multiplayer.get_remote_sender_id())
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_shrine_swap(skills: Array) -> void:
+	if is_host:
+		_shrine_swap(multiplayer.get_remote_sender_id(), skills)
+
+
+func _shrine_open(id: int) -> void:
+	if not peers.has(id) or not peers[id]["in_round"]:
+		return
+	var rec: Dictionary = peers[id]
+	var pos: Vector3 = main.player.global_position if id == 1 else rec["pos"]
+	if not main.near_shrine(pos) or (rec["form"] != "" and id != 1):
+		return
+	rec["shrine_at"] = now()
+	main.broadcast_fx("shrine", [])
+	print("[host] %s is at the shrine" % rec["name"])
+
+
+func _shrine_swap(id: int, skills: Array) -> void:
+	if not peers.has(id) or not peers[id]["in_round"]:
+		return
+	var rec: Dictionary = peers[id]
+	var pos: Vector3 = main.player.global_position if id == 1 else rec["pos"]
+	# The full swap time has to have passed (a little slack for lag), standing at the shrine.
+	if now() - rec.get("shrine_at", -100.0) < 2.7 or not main.near_shrine(pos):
+		if id != 1:
+			_note_cheat(id, "swapping skills without the shrine")
+		return
+	rec["shrine_at"] = -100.0
+	rec["loadout"][rec["role"]] = Skills.clean_loadout(rec["role"], skills)
+	for skill in rec["loadout"][rec["role"]]:   # fresh skills start on cooldown (no swap-dancing)
+		if skill != "":
+			rec["skill_ready"][skill] = now() + Skills.cooldown(skill) - 0.5
+	print("[host] %s swapped skills at the shrine: %s" % [rec["name"], "+".join(rec["loadout"][rec["role"]])])
+
+
+# ---------------- chat ----------------
+
+func send_chat(text: String, team_only: bool) -> void:
+	if is_host:
+		_relay_chat(1, text, team_only)
+	else:
+		c_chat.rpc_id(1, text, team_only)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_chat(text: String, team_only: bool) -> void:
+	if is_host:
+		_relay_chat(multiplayer.get_remote_sender_id(), text, team_only)
+
+
+func _relay_chat(id: int, text: String, team_only: bool) -> void:
+	if not peers.has(id):
+		return
+	var rec: Dictionary = peers[id]
+	var t := now()
+	if t < rec.get("chat_ready", 0.0):
+		return                         # spam limit
+	rec["chat_ready"] = t + 0.6
+	text = text.strip_edges().substr(0, 120)
+	if text == "":
+		return
+	var in_round: bool = phase == "hiding" or phase == "hunting"
+	var sender_role: String = rec["role"] if in_round and rec["in_round"] else ""
+	for to in peers:
+		if team_only and peers[to]["role"] != rec["role"]:
+			continue
+		if to == 1:
+			main.show_chat(rec["name"], sender_role, text, team_only)
+		else:
+			s_chat.rpc_id(to, rec["name"], sender_role, text, team_only)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_chat(sender: String, sender_role: String, text: String, team_only: bool) -> void:
+	main.show_chat(sender.substr(0, 16), sender_role, text.substr(0, 120), team_only)
+
+
 # Skills start at the player's camera, which can sit ~4 m behind them in third person.
 func _origin_ok(rec: Dictionary, origin: Vector3) -> bool:
 	return origin.distance_to(rec["pos"] + Vector3.UP * 1.3) <= 5.0
@@ -919,8 +1019,6 @@ func c_skill(skill: String, origin: Vector3, dir: Vector3, point: Vector3, index
 		return
 	var id := multiplayer.get_remote_sender_id()
 	if not _skill_allowed(id, skill, origin):
-		return
-	if skill == "cherub" and point.distance_to(origin) > Skills.CHERUB_RANGE + 2.0:
 		return
 	var rec: Dictionary = peers[id]
 	if not remotes.has(rec["eid"]):
@@ -999,7 +1097,7 @@ func demon_nodes() -> Array:
 
 
 # Pull a demon somewhere (vacuum, grappling hook), drain Hatred, lock skills.
-func affect_node(node: Node3D, target: Vector3, hatred_drain: float, lockout: float) -> void:
+func affect_node(node: Node3D, target: Vector3, hatred_drain: float, lockout: float, label: String) -> void:
 	var id := 1 if node == main.player else (_peer_for_eid(node.eid) if node is RemotePlayer else 0)
 	if id == 0 or not peers.has(id):
 		return
@@ -1010,14 +1108,14 @@ func affect_node(node: Node3D, target: Vector3, hatred_drain: float, lockout: fl
 	rec["grace_until"] = t + 1.3     # they're about to move fast: not cheating
 	rec["air_time"] = 0.0
 	if id == 1:
-		main.online_affected(target, hatred_drain, lockout)
+		main.online_affected(target, hatred_drain, lockout, label)
 	else:
-		s_affected.rpc_id(id, target, hatred_drain, lockout)
+		s_affected.rpc_id(id, target, hatred_drain, lockout, label)
 
 
 @rpc("authority", "call_remote", "reliable")
-func s_affected(target: Vector3, hatred_drain: float, lockout: float) -> void:
-	main.online_affected(target, hatred_drain, lockout)
+func s_affected(target: Vector3, hatred_drain: float, lockout: float, label: String) -> void:
+	main.online_affected(target, hatred_drain, lockout, label.substr(0, 20))
 
 
 func tell_possessed(id: int, type_name: String, pos: Vector3, yaw: float, index: int) -> void:

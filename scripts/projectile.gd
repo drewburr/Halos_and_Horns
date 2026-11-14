@@ -8,6 +8,7 @@ const Effects = preload("res://scripts/effects.gd")
 
 const DAMAGE := 25
 const LIFETIME := 3.0
+const BOOK_RADIUS := 0.25
 var color := Color(1.0, 0.9, 0.4)   # set by the thrower from its blessing type
 var velocity := Vector3.ZERO
 var shooter: CollisionObject3D
@@ -15,11 +16,15 @@ var visual_only := false
 var damage := DAMAGE
 var gravity := 4.0
 var size := 0.12
+var book := false                # Holy Scripture: a spinning book instead of a glowing ball
 var on_impact: Callable          # called with the hit position (vacuum orb); host/practice only
 var _life := LIFETIME
 
 
 func _ready() -> void:
+	if book:
+		_make_book()
+		return
 	var mi := MeshInstance3D.new()
 	var s := SphereMesh.new()
 	s.radius = size
@@ -34,7 +39,32 @@ func _ready() -> void:
 	add_child(mi)
 
 
+func _make_book() -> void:
+	var cover := MeshInstance3D.new()
+	var b := BoxMesh.new()
+	b.size = Vector3(0.32, 0.09, 0.42)
+	cover.mesh = b
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.45, 0.12, 0.1)
+	cover.material_override = m
+	add_child(cover)
+	var pages := MeshInstance3D.new()
+	var pb := BoxMesh.new()
+	pb.size = Vector3(0.3, 0.07, 0.4)
+	pages.mesh = pb
+	pages.position.x = 0.015
+	var pm := StandardMaterial3D.new()
+	pm.albedo_color = Color(1.0, 0.95, 0.75)
+	pm.emission_enabled = true
+	pm.emission = Color(1.0, 0.85, 0.4)       # holy glow from the pages
+	pm.emission_energy_multiplier = 1.5
+	pages.material_override = pm
+	add_child(pages)
+
+
 func _physics_process(delta: float) -> void:
+	if book:
+		rotate_object_local(Vector3.RIGHT, delta * 12.0)
 	_life -= delta
 	if _life <= 0.0:
 		queue_free()
@@ -46,6 +76,8 @@ func _physics_process(delta: float) -> void:
 	if shooter:
 		query.exclude = [shooter.get_rid()]
 	var hit := get_world_3d().direct_space_state.intersect_ray(query)
+	if hit.is_empty() and book:
+		hit = _book_sweep(from, to)   # a big book: it hits anything it brushes, not just dead center
 	if hit.is_empty():
 		global_position = to
 		return
@@ -64,3 +96,26 @@ func _physics_process(delta: float) -> void:
 	var puff_color := Color(0.9, 0.15, 0.1, 0.8) if hit_demon else Color(1.0, 0.95, 0.6, 0.7)
 	Effects.puff(get_parent(), hit["position"], puff_color, 1.0 if hit_demon else 0.6)
 	queue_free()
+
+
+# Sweep a book-sized sphere along this frame's path; returns the same keys as a ray hit.
+func _book_sweep(from: Vector3, to: Vector3) -> Dictionary:
+	var sphere := SphereShape3D.new()
+	sphere.radius = BOOK_RADIUS
+	var params := PhysicsShapeQueryParameters3D.new()
+	params.shape = sphere
+	params.transform = Transform3D(Basis(), from)
+	params.motion = to - from
+	params.collision_mask = 1
+	if shooter:
+		params.exclude = [shooter.get_rid()]
+	var space := get_world_3d().direct_space_state
+	var frac := space.cast_motion(params)
+	if frac.size() < 2 or frac[1] >= 1.0:
+		return {}
+	params.transform = Transform3D(Basis(), from + (to - from) * frac[1])
+	params.motion = Vector3.ZERO
+	var info := space.get_rest_info(params)
+	if info.is_empty():
+		return {}
+	return {"collider": instance_from_id(info["collider_id"]), "position": info["point"]}

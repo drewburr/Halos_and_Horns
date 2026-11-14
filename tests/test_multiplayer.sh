@@ -16,9 +16,9 @@ sleep 3
 for n in Wife Brother Squirrel Oddy; do
 	extra=""
 	[ "$n" = "Oddy" ] && extra="--cheat=teleport,fly"
-	[ "$n" = "Wife" ] && extra="--skills=cherub,vacuum"
+	[ "$n" = "Wife" ] && extra="--skills=cherub,vacuum --say=hello_everyone"
 	[ "$n" = "Squirrel" ] && extra="--skills=grapple,leap"
-	[ "$n" = "Brother" ] && extra="--skills=fire,fly"
+	[ "$n" = "Brother" ] && extra="--skills=fire,fly --sayteam=demons_only_secret"
 	timeout 240 "$GODOT" --headless -- --join=127.0.0.1 --name=$n --autobot --quit-after-round $extra > "$OUT/$n.log" 2>&1 &
 	sleep 0.5
 done
@@ -66,6 +66,9 @@ for n in Wife Brother Squirrel Oddy; do
 	check "$n's Tab roster lists all 5 players" "[ \$(echo \"$line\" | grep -oE '(Theo|Wife|Brother|Squirrel|Oddy)\\((angel|demon),' | wc -l) -eq 5 ]"
 	check "$n's ping is measured" "echo \"$line\" | grep -qE 'my ping [0-9]+'"
 done
+check "global chat reaches the other team" "grep -q 'Wife: hello_everyone' '$OUT/Oddy.log'"
+check "team chat reaches teammates" "grep -q '\[TEAM\] Brother: demons_only_secret' '$OUT/host.log'"
+check "team chat never reaches the other team" "! grep -q 'demons_only_secret' '$OUT/Wife.log' '$OUT/Squirrel.log'"
 check "no player script errors" "! grep -q 'SCRIPT ERROR' '$OUT'/*.log"
 
 if [ $fail -eq 0 ]; then echo "ALL PASSED"; else echo "FAILED (logs in $OUT)"; fi

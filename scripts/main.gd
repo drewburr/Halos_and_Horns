@@ -16,11 +16,13 @@ const Autobot = preload("res://scripts/autobot.gd")
 const Skills = preload("res://scripts/skills.gd")
 const Cherub = preload("res://scripts/cherub.gd")
 const Fire = preload("res://scripts/fire.gd")
+const Shrine = preload("res://scripts/shrine.gd")
+const SHRINE_POS := Vector3(-20, 0, 4)   # the one shrine on this map
 const Vortex = preload("res://scripts/vortex.gd")
 const Rope = preload("res://scripts/rope.gd")
 const Projectile = preload("res://scripts/projectile.gd")
 
-const GAME_VERSION := "0.4.0 (Hellfire)"
+const GAME_VERSION := "0.4.1 (shrine, chat, kick, scriptures)"
 const HIDE_TIME := 30.0
 const HUNT_TIME := 180.0
 const HIDE_CHOICES := [15.0, 30.0, 45.0, 60.0, 90.0]
@@ -51,6 +53,17 @@ var _cherub_check := 0.0
 var _possessions := {}       # who possesses which prop: user key -> prop index (decider only)
 var _loadout_buttons: Array = []   # [team, slot, OptionButton]
 var skill_label: Label
+var shrine: Node3D
+var shrine_panel: PanelContainer
+var _shrine_buttons := []       # the two OptionButtons for the current side
+var _shrine_pick := ["", ""]
+var _shrine_elapsed := 0.0      # seconds since this swap started
+var _shrine_done := false       # picked and confirmed; waiting out the rest of the 3 s
+var _shrine_status: Label
+var chat_box: VBoxContainer     # recent chat lines, bottom left
+var chat_edit: LineEdit
+var chat_team_only := false
+var _chat_lines := []           # [Label, seconds left on screen]
 var lobby_times: VBoxContainer   # host's round-length pickers
 var _time_pick := {}            # picker label -> chosen index
 var hold_bar: ColorRect          # "returning to demon form" progress, under the crosshair
@@ -138,6 +151,8 @@ func _ready() -> void:
 	_build_menu()
 	_build_pause_menu()
 	_build_lobby()
+	_build_shrine_panel()
+	_build_chat()
 	_load_settings()
 	_show_menu("")
 	_handle_command_line()
@@ -171,6 +186,9 @@ func _setup_input() -> void:
 	_add_key("taunt_signature", KEY_2)
 	_add_key("toggle_tuning", KEY_F1)
 	_add_key("skill_1", KEY_Q)
+	_add_key("shrine", KEY_G)
+	_add_key("chat_all", KEY_ENTER)
+	_add_key("chat_team", KEY_BACKSPACE)
 	_add_key("melee", KEY_F)
 	if not InputMap.has_action("rmb"):
 		InputMap.add_action("rmb")
@@ -186,6 +204,21 @@ func _setup_input() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if mode == "menu":
+		return
+	if chat_edit.visible:
+		if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
+			_close_chat()
+			get_viewport().set_input_as_handled()
+		return
+	if mode == "online" and not _any_panel_open() and (event.is_action_pressed("chat_all") or event.is_action_pressed("chat_team")):
+		_open_chat(event.is_action_pressed("chat_team"))
+		get_viewport().set_input_as_handled()
+		return
+	if event.is_action_pressed("shrine") and not _any_panel_open():
+		_try_open_shrine()
+		return
+	if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE and shrine_panel.visible:
+		_close_shrine()
 		return
 	if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
 		pause_panel.visible = not pause_panel.visible
@@ -204,12 +237,208 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 # The mouse is free whenever a menu or panel is open; otherwise it steers.
+func _any_panel_open() -> bool:
+	return menu_panel.visible or pause_panel.visible or tuning_panel.visible or lobby_panel.visible \
+			or shrine_panel.visible or chat_edit.visible
+
+
 func _refresh_mouse() -> void:
-	var ui_open := menu_panel.visible or pause_panel.visible or tuning_panel.visible \
-			or lobby_panel.visible
+	var ui_open := _any_panel_open()
 	player.input_enabled = not ui_open
 	if DisplayServer.get_name() != "headless":
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if ui_open else Input.MOUSE_MODE_CAPTURED
+
+
+# ---------- the shrine (swap skills mid-round) ----------
+# Stand at the shrine and press G. Picking takes as long as you like, but the
+# whole swap takes at least 3 seconds from pressing G: pick fast and you wait out
+# the rest, take longer and it applies as soon as you confirm. You can't move
+# while you're at it, demons have to leave their prop first, and the shrine
+# flares up so everyone knows someone is there.
+
+func _build_shrine_panel() -> void:
+	var parts := _panel(420)
+	shrine_panel = parts[0]
+	var box: VBoxContainer = parts[1]
+	var title := Label.new()
+	title.text = "Shrine: swap your skills"
+	title.add_theme_font_size_override("font_size", 26)
+	box.add_child(title)
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	for slot in 2:
+		var ob := OptionButton.new()
+		ob.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		ob.item_selected.connect(func(i): _on_shrine_pick(slot, ob.get_item_metadata(i)))
+		row.add_child(ob)
+		_shrine_buttons.append(ob)
+	_shrine_status = Label.new()
+	box.add_child(_shrine_status)
+	_button(box, "Done", _confirm_shrine)
+	_button(box, "Cancel (Esc)", _close_shrine)
+	shrine_panel.visible = false
+
+
+func near_shrine(pos: Vector3) -> bool:
+	return Vector2(pos.x - SHRINE_POS.x, pos.z - SHRINE_POS.z).length() <= Shrine.RADIUS and absf(pos.y - SHRINE_POS.y) < 2.0
+
+
+func _try_open_shrine() -> void:
+	if not (state == State.HIDING or state == State.HUNTING) or player.frozen:
+		return
+	if not near_shrine(player.global_position):
+		_toast("The shrine is the only place to swap skills.", 1.5)
+		return
+	if player.possessed_type != "":
+		_toast("Leave your prop first (hold left click).", 1.5)
+		return
+	_shrine_pick = player.loadout[role].duplicate()
+	var keys: Array = Skills.SLOT_KEYS
+	for slot in 2:
+		var ob: OptionButton = _shrine_buttons[slot]
+		ob.clear()
+		ob.add_item("%s: none" % keys[slot])
+		ob.set_item_metadata(0, "")
+		for id in Skills.for_team(role):
+			ob.add_item("%s: %s" % [keys[slot], Skills.label(id)])
+			ob.set_item_metadata(ob.item_count - 1, id)
+			ob.set_item_tooltip(ob.item_count - 1, Skills.SKILLS[id]["desc"])
+			if id == _shrine_pick[slot]:
+				ob.select(ob.item_count - 1)
+	_shrine_elapsed = 0.0
+	_shrine_done = false
+	shrine_panel.visible = true
+	player.velocity = Vector3.ZERO
+	_refresh_mouse()
+	if mode == "practice":
+		shrine.flare()
+	elif net:
+		net.shrine_open()
+
+
+func _on_shrine_pick(slot: int, id: String) -> void:
+	if id != "" and id in _shrine_pick:
+		_shrine_pick[_shrine_pick.find(id)] = ""
+	_shrine_pick[slot] = id
+	for s2 in 2:   # keep both buttons showing the real picks
+		var ob: OptionButton = _shrine_buttons[s2]
+		for i in ob.item_count:
+			if ob.get_item_metadata(i) == _shrine_pick[s2]:
+				ob.select(i)
+
+
+func _confirm_shrine() -> void:
+	_shrine_done = true
+
+
+func _close_shrine() -> void:
+	_shrine_done = false
+	shrine_panel.visible = false
+	_refresh_mouse()
+
+
+func _update_shrine(delta: float) -> void:
+	if not shrine_panel.visible:
+		return
+	_shrine_elapsed += delta
+	if not (state == State.HIDING or state == State.HUNTING) or player.frozen or player.possessed_type != "":
+		_close_shrine()
+		return
+	var left := Shrine.SWAP_TIME - _shrine_elapsed
+	if _shrine_done and left <= 0.0:
+		loadout[role] = Skills.clean_loadout(role, _shrine_pick)
+		player.loadout = loadout.duplicate(true)
+		for id in loadout[role]:   # fresh skills start on cooldown (no swap-dancing)
+			if id != "":
+				player.skill_cd[id] = Skills.cooldown(id)
+		_sync_loadout_buttons()
+		_save_settings()
+		if net:
+			net.shrine_swap(loadout[role])
+		_close_shrine()
+		_toast("Skills swapped!", 1.2)
+		return
+	if _shrine_done:
+		_shrine_status.text = "Swapping... %.1f s" % left
+	elif left > 0.0:
+		_shrine_status.text = "Pick your skills (the swap takes %.1f s more)" % left
+	else:
+		_shrine_status.text = "Pick your skills, then Done"
+
+
+# ---------- chat ----------
+# Enter: everyone. Backspace: your team only. Enter sends, Esc cancels.
+
+func _build_chat() -> void:
+	chat_box = VBoxContainer.new()
+	chat_box.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	chat_box.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	chat_box.position += Vector2(16, -190)
+	chat_box.custom_minimum_size.x = 520
+	chat_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_layer.add_child(chat_box)
+	chat_edit = LineEdit.new()
+	chat_edit.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	chat_edit.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	chat_edit.position += Vector2(16, -150)
+	chat_edit.custom_minimum_size.x = 520
+	chat_edit.max_length = 120
+	chat_edit.visible = false
+	chat_edit.text_submitted.connect(_send_chat)
+	hud_layer.add_child(chat_edit)
+
+
+func _open_chat(team_only: bool) -> void:
+	chat_team_only = team_only
+	chat_edit.placeholder_text = ("Team chat (%ss only)" % role) if team_only else "Chat to everyone"
+	chat_edit.text = ""
+	chat_edit.visible = true
+	_refresh_mouse()
+	chat_edit.call_deferred("grab_focus")
+	for entry in _chat_lines:
+		entry[1] = maxf(entry[1], 8.0)   # show recent lines while typing
+
+
+func _close_chat() -> void:
+	chat_edit.release_focus()
+	chat_edit.visible = false
+	_refresh_mouse()
+
+
+func _send_chat(text: String) -> void:
+	text = text.strip_edges()
+	_close_chat()
+	if text == "":
+		return
+	if net:
+		net.send_chat(text, chat_team_only)
+
+
+# Called by the network for every chat line we're allowed to see.
+func show_chat(sender: String, sender_role: String, text: String, team_only: bool) -> void:
+	var lbl := _make_label(17)
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.custom_minimum_size.x = 520
+	lbl.text = "%s%s: %s" % ["[TEAM] " if team_only else "", sender, text]
+	var color := Color(1, 1, 1)
+	if sender_role == "angel":
+		color = Color(1.0, 0.92, 0.6)
+	elif sender_role == "demon":
+		color = Color(1.0, 0.55, 0.5)
+	lbl.add_theme_color_override("font_color", color)
+	chat_box.add_child(lbl)
+	print("[chat] " + lbl.text)
+	_chat_lines.append([lbl, 12.0])
+	while _chat_lines.size() > 8:
+		_chat_lines[0][0].queue_free()
+		_chat_lines.pop_front()
+
+
+func _update_chat(delta: float) -> void:
+	for entry in _chat_lines:
+		if not chat_edit.visible:
+			entry[1] -= delta
+		entry[0].modulate.a = clampf(entry[1], 0.0, 1.0)
 
 
 # ---------- world ----------
@@ -278,6 +507,11 @@ func _build_map() -> void:
 	_add_block(Vector3(14, 4, -12), Vector3(3, 8, 3), Color(0.55, 0.5, 0.6))
 	_add_block(Vector3(-16, 0.5, -16), Vector3(6, 1, 6), Color(0.65, 0.6, 0.5))
 	_add_block(Vector3(18, 1.5, 14), Vector3(4, 3, 10), Color(0.6, 0.5, 0.45))
+	# The shrine: the only place to swap skills mid-round
+	shrine = Shrine.new()
+	add_child(shrine)
+	shrine.position = SHRINE_POS
+	structures.append([Vector2(SHRINE_POS.x, SHRINE_POS.z), 3.0])
 	# A raised platform with a ramp up to it
 	_add_block(Vector3(-6, 1, 12), Vector3(8, 2, 4), Color(0.6, 0.6, 0.55))
 	_add_block(Vector3(-6, 0.8, 7.3), Vector3(2.5, 0.4, 5.9), Color(0.5, 0.45, 0.4), Vector3(-0.35, 0, 0))   # top edge flush with the platform
@@ -777,6 +1011,8 @@ func _process(delta: float) -> void:
 	if is_authority():
 		_check_cherubs(delta)
 	_check_burning()
+	_update_shrine(delta)
+	_update_chat(delta)
 	_update_hud(delta)
 
 
@@ -889,13 +1125,13 @@ func online_you_hit(health_fraction: float) -> void:
 
 
 # The angels yanked us (vacuum orb or grappling hook).
-func online_affected(target: Vector3, hatred_drain: float, lockout: float) -> void:
+func online_affected(target: Vector3, hatred_drain: float, lockout: float, label: String) -> void:
 	player.pull_to(target, 1.0)
 	player.hatred = maxf(player.hatred - hatred_drain, 0.0)
 	player.skill_lock = maxf(player.skill_lock, lockout)
 	_hurt_time = 0.2
 	if state != State.ENDED:
-		_toast("VACUUMED!" if lockout > 0.0 else "HOOKED!", 1.2)
+		_toast(label, 1.2)
 
 
 func online_you_were_caught(pos: Vector3) -> void:
@@ -973,6 +1209,8 @@ func _on_player_skill(id: String, origin: Vector3, dir: Vector3, point: Vector3,
 	elif net:
 		if id == "vacuum" and not net.is_host:
 			_spawn_orb(origin, dir, true)   # our own copy, just to see; the host's is real
+		if id == "scripture" and not net.is_host:
+			_spawn_scripture(origin, dir, true)
 		net.on_local_skill(id, origin, dir, point, index)
 
 
@@ -1023,10 +1261,14 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 		point: Vector3, index: int) -> void:
 	match id:
 		"cherub":
+			# Thrown from the angel's hands; where it ends up is up to physics.
 			_cherub_counter += 1
-			var pos := ground_below(point)
-			_auth_cherubs[_cherub_counter] = {"pos": pos, "until": Time.get_ticks_msec() / 1000.0 + Skills.CHERUB_LIFETIME, "alarmed": false}
-			broadcast_fx("cherub", [_cherub_counter, pos])
+			var flat := Vector3(dir.x, 0.0, dir.z).normalized()
+			var pos: Vector3 = user.global_position + Vector3.UP * 1.1 + flat * 0.8
+			var vel: Vector3 = dir * Skills.CHERUB_THROW_SPEED + Vector3.UP * Skills.CHERUB_THROW_UP
+			_auth_cherubs[_cherub_counter] = {"pos": pos, "until": Time.get_ticks_msec() / 1000.0 + Skills.CHERUB_LIFETIME,
+					"alarmed": false, "rested": false}
+			broadcast_fx("cherub", [_cherub_counter, pos, vel])
 			print("[decider] cherub dropped")
 		"fire":
 			if point.distance_to(origin) > Skills.FIRE_RANGE + 2.0:
@@ -1035,6 +1277,22 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 			var spot := ground_below(point - dir * 0.3)
 			broadcast_fx("fire", [_fire_counter, user.global_position + Vector3.UP * 1.0, spot])
 			print("[decider] hellfire lit")
+		"scripture":
+			var book := _spawn_scripture(origin, dir, false)
+			book.shooter = user
+			broadcast_fx("scripture", [origin, dir], user_key)
+		"kick":
+			var hit := _ray(origin, origin + dir * Skills.KICK_RANGE, [user])
+			if hit.is_empty() or not hit["collider"].has_method("take_hit"):
+				return
+			var c = hit["collider"]
+			if c.take_hit(Skills.KICK_DAMAGE):
+				user.confirm_hit()
+				var away := Vector3(dir.x, 0.0, dir.z).normalized()
+				var land := ground_below(c.global_position + away * Skills.KICK_PUSH + Vector3.UP * 1.0)
+				_affect_demon(c, land, 0.0, 0.0, "KICKED!")
+				broadcast_fx("kick", [hit["position"]])
+				print("[decider] holy kick sent a demon flying")
 		"stomp":
 			var hurt := 0
 			for d in demon_targets():
@@ -1060,7 +1318,7 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 			if c.has_method("take_hit") and c.take_hit(Skills.GRAPPLE_DAMAGE):
 				user.confirm_hit()
 				var flat := Vector3(dir.x, 0.0, dir.z).normalized()
-				_affect_demon(c, user.global_position + flat * 1.5, 0.0, 0.0)
+				_affect_demon(c, user.global_position + flat * 1.5, 0.0, 0.0, "HOOKED!")
 				print("[decider] grappling hook snagged a demon")
 			elif net and user_key > 1:
 				net.grant_grapple(user_key)   # they may zip fast for a moment
@@ -1074,6 +1332,18 @@ func authority_melee(user: Node3D, _user_key: int, origin: Vector3, dir: Vector3
 			and hit["collider"].take_hit(Skills.MELEE_DAMAGE):
 		user.confirm_hit()
 		print("[decider] melee hit a demon")
+
+
+func _spawn_scripture(origin: Vector3, dir: Vector3, visual_only: bool) -> Projectile:
+	var book := Projectile.new()
+	book.book = true
+	book.damage = Skills.SCRIPTURE_DAMAGE
+	book.gravity = Skills.SCRIPTURE_GRAVITY
+	book.visual_only = visual_only
+	_fx_parent().add_child(book)
+	book.global_position = origin + dir * 0.6
+	book.velocity = dir * Skills.SCRIPTURE_SPEED + Vector3.UP * 3.0
+	return book
 
 
 func _spawn_orb(origin: Vector3, dir: Vector3, visual_only: bool) -> Projectile:
@@ -1095,18 +1365,18 @@ func _vacuum_at(center: Vector3) -> void:
 		if d.global_position.distance_to(center) <= Skills.VACUUM_RADIUS:
 			caught = true
 			var offset := Vector3(randf_range(-0.6, 0.6), 0.0, randf_range(-0.6, 0.6))
-			_affect_demon(d, center + offset, Skills.VACUUM_HATRED_DRAIN, Skills.VACUUM_LOCKOUT)
+			_affect_demon(d, center + offset, Skills.VACUUM_HATRED_DRAIN, Skills.VACUUM_LOCKOUT, "VACUUMED!")
 	broadcast_fx("vortex", [center, caught])
 	print("[decider] vacuum orb %s" % ("CAUGHT a demon" if caught else "found nothing"))
 
 
 # Yank a demon somewhere, drain Hatred, lock their skills.
-func _affect_demon(node: Node3D, target: Vector3, hatred_drain: float, lockout: float) -> void:
+func _affect_demon(node: Node3D, target: Vector3, hatred_drain: float, lockout: float, label: String) -> void:
 	if node is BotDemon:
 		var tw := node.create_tween()
 		tw.tween_property(node, "global_position", Vector3(target.x, node.global_position.y, target.z), 0.3)
 	elif net:
-		net.affect_node(node, target, hatred_drain, lockout)
+		net.affect_node(node, target, hatred_drain, lockout, label)
 
 
 func _authority_possess(user: Node3D, user_key: int, index: int) -> void:
@@ -1205,7 +1475,9 @@ func _check_cherubs(delta: float) -> void:
 # who caused it: they already drew their own rope / orb, so they don't get a copy.
 func broadcast_fx(kind: String, args: Array, except_key := -1) -> void:
 	var we_caused_it := except_key == 0 or except_key == 1   # practice player or the host
-	if not (we_caused_it and (kind == "rope" or kind == "orb")):
+	# Orbs and books: the decider's own real projectile is already flying here.
+	var real_one_here := kind == "orb" or kind == "scripture"
+	if not real_one_here and not (we_caused_it and kind == "rope"):
 		fx(kind, args)
 	if net and net.is_host:
 		net.send_fx(kind, args, except_key)
@@ -1221,7 +1493,7 @@ func fx(kind: String, args: Array) -> void:
 			var c := Cherub.new()
 			c.cherub_id = args[0]
 			_fx_parent().add_child(c)
-			c.global_position = args[1]
+			c.launch(args[1], args[2] if args.size() > 2 else Vector3.ZERO)
 			cherubs[args[0]] = c
 			if mode != "online" or (net and net.is_host):
 				c.on_kick = kick_cherub
@@ -1231,14 +1503,20 @@ func fx(kind: String, args: Array) -> void:
 		"cherub_alarm":
 			if cherubs.has(args[0]) and is_instance_valid(cherubs[args[0]]):
 				cherubs[args[0]].alarmed = args[1]
+		"shrine":
+			shrine.flare()
 		"orb":
 			_spawn_orb(args[0], args[1], true)
+		"scripture":
+			_spawn_scripture(args[0], args[1], true)
 		"fire":
 			var f := Fire.new()
 			f.from = args[1]
 			f.to = args[2]
 			_fx_parent().add_child(f)
 			fires[args[0]] = f
+		"kick":
+			Effects.puff(_fx_parent(), args[0], Color(1.0, 0.95, 0.6, 0.8), 1.2)
 		"stomp":
 			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.2, Color(1.0, 1.0, 1.0, 0.75), Skills.STOMP_RADIUS * 1.5)
 			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.6, Color(1.0, 0.95, 0.7, 0.6), 2.0)
@@ -1443,7 +1721,7 @@ func _build_hud() -> void:
 	skill_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	skill_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	skill_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	skill_label.position += Vector2(-16, -16)
+	skill_label.position += Vector2(-16, -76)   # above the two controls lines
 	hud.add_child(skill_label)
 
 	# Ping, top right

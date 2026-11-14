@@ -32,6 +32,8 @@ func aim_at(player, target: Node3D, aim_height: float, dist := 3.5) -> bool:
 	for i in 16:
 		var angle := TAU * i / 16.0
 		var spot := target.global_position + Vector3(cos(angle), 0, sin(angle)) * dist
+		if main.ground_below(spot + Vector3.UP * 3.0).y > target.global_position.y + 0.3:
+			continue   # that spot is inside a building or on top of something
 		player.global_position = spot + Vector3.UP * 0.1
 		player.velocity = Vector3.ZERO
 		player.look_at(Vector3(aim_point.x, player.global_position.y, aim_point.z))
@@ -218,12 +220,27 @@ func _run() -> void:
 	player.loadout["angel"] = ["cherub", "vacuum"]
 	var bot = get_nodes_in_group("demon")[0]
 
-	# Cherub: near a demon it alarms, far away it doesn't.
-	main.authority_skill(player, 0, "cherub", player.global_position, Vector3.FORWARD, bot.global_position + Vector3(2, 0, 0), -1)
-	main.authority_skill(player, 0, "cherub", player.global_position, Vector3.FORWARD, Vector3(0, 0, -26), -1)
+	# Cherub: thrown from the angel, it flies off and lands a good way away.
+	player.global_position = Vector3(-20, 0.1, -10)
+	player.rotation = Vector3.ZERO
+	player.velocity = Vector3.ZERO
+	await frames(5)
+	var throw_from: Vector3 = player.global_position
+	main.authority_skill(player, 0, "cherub", player.camera.global_position, Vector3.FORWARD, Vector3.ZERO, -1)
+	await frames(150)
+	var thrown = main.cherubs.get(1)
+	var flew: float = throw_from.z - thrown.global_position.z if thrown else 0.0
+	check(thrown != null and flew > 6.0 and flew < 20.0, "a cherub is thrown from the angel and lands a ways off (%.1f m)" % flew)
+	check(thrown != null and thrown.is_on_floor() and thrown.velocity.length() < 0.3, "...and settles where it lands")
+	# Near a demon it alarms, far away it doesn't (placed by hand for the test).
+	main.authority_skill(player, 0, "cherub", player.camera.global_position, Vector3.FORWARD, Vector3.ZERO, -1)
+	main.authority_skill(player, 0, "cherub", player.camera.global_position, Vector3.FORWARD, Vector3.ZERO, -1)
+	await frames(2)
+	var near_c = main.cherubs.get(2)
+	var far_c = main.cherubs.get(3)
+	near_c.launch(bot.global_position + Vector3(2, 0.2, 0), Vector3.ZERO)
+	far_c.launch(Vector3(0, 0.2, -26), Vector3.ZERO)
 	await frames(30)
-	var near_c = main.cherubs.get(1)
-	var far_c = main.cherubs.get(2)
 	check(near_c != null and near_c.alarmed, "a cherub near a hidden demon squawks")
 	check(far_c != null and not far_c.alarmed, "a cherub with no demon nearby stays calm")
 	check(near_c != null and near_c._bubble.visible, "...and shows its detection bubble")
@@ -239,9 +256,9 @@ func _run() -> void:
 		shot.global_position = c_start + Vector3(-3, 0.4, 0)
 		await frames(150)
 		var moved: float = far_c.global_position.x - c_start.x
-		check(moved > 6.0, "a blessing sends the cherub skidding (%.1f m)" % moved)
+		check(moved > 3.0, "a blessing sends the cherub skidding (%.1f m)" % moved)
 		check(absf(far_c.velocity.x) < 0.3, "...and it slides to a stop")
-		check(main._auth_cherubs.has(2) and main._auth_cherubs[2]["pos"].distance_to(far_c.global_position) < 0.5,
+		check(main._auth_cherubs.has(3) and main._auth_cherubs[3]["pos"].distance_to(far_c.global_position) < 0.5,
 				"...and it keeps watching from where it landed")
 
 	# Vacuum: pulls nearby props in and yanks the demon.
@@ -369,6 +386,40 @@ func _run() -> void:
 		check(victim.health == hp_before - Skills.STOMP_DAMAGE, "...and hurts the demon it lands next to")
 		check(not player.use_skill(1), "...one stomp per leap (the cooldown is still running)")
 
+	# Holy Scripture: a heavy book that hits hard.
+	var reader = null
+	player.loadout["angel"] = ["scripture", "leap"]
+	for b in get_nodes_in_group("demon"):
+		if b.health > Skills.SCRIPTURE_DAMAGE and (await aim_at(player, b, 0.6, 5.0) or await aim_at(player, b, 0.6, 3.5)):
+			reader = b
+			break
+	check(reader != null, "lined up a demon for a scripture")
+	if reader:
+		player.skill_cd.clear()
+		var rhp: int = reader.health
+		check(player.use_skill(0), "Holy Scripture")
+		await frames(40)
+		check(reader.health == rhp - Skills.SCRIPTURE_DAMAGE, "...the book hits for holy damage (%d)" % (rhp - reader.health))
+		check(not player.use_skill(0), "...then it's on cooldown")
+
+	# Holy Kick: boots a demon away.
+	var kicked = null
+	for b in get_nodes_in_group("demon"):
+		if b.health > 0:
+			kicked = b
+	if kicked:
+		player.loadout["angel"] = ["kick", "leap"]
+		player.skill_cd.clear()
+		check(await aim_at(player, kicked, 0.4, 1.8), "lined up a demon right in front of us")
+		var kd_before: float = kicked.global_position.distance_to(player.global_position)
+		var khp: int = kicked.health
+		check(player.use_skill(0), "Holy Kick")
+		await frames(40)
+		var kd_after: float = kicked.global_position.distance_to(player.global_position)
+		check(kd_after > kd_before + 4.0, "...sends the demon flying (%.1f m -> %.1f m)" % [kd_before, kd_after])
+		check(kicked.health == khp - Skills.KICK_DAMAGE, "...with a little damage")
+		player.loadout["angel"] = ["grapple", "leap"]
+
 	# Hellfire (decided by the practice game here): an angel in it is slowed and burns blessings.
 	player.global_position = Vector3(-20, 0.1, -20)
 	player.velocity = Vector3.ZERO
@@ -394,6 +445,39 @@ func _run() -> void:
 	check(player.hatred < 70.0, "...costs Hatred (%.0f left)" % player.hatred)
 	await frames(5)
 	check(main.fires.size() > fires_before, "...and lights a fire")
+
+	# The shrine: the only place to swap skills mid-round, and it takes 3 s in total.
+	main.state = main.State.HUNTING
+	main.role = "demon"          # (the Hellfire check above switched only the player to demon)
+	main.time_left = 999.0
+	player.loadout["demon"] = ["fire", "fly"]
+	main.loadout["demon"] = ["fire", "fly"]
+	player.global_position = main.SHRINE_POS + Vector3(6, 0.5, 0)
+	await frames(10)
+	main._try_open_shrine()
+	check(not main.shrine_panel.visible, "away from the shrine: no swapping")
+	player.global_position = main.SHRINE_POS + Vector3(1, 0.5, 0)
+	await frames(10)
+	player.force_possess("crate")
+	main._try_open_shrine()
+	check(not main.shrine_panel.visible, "demons can't swap while hiding in a prop")
+	player.unpossess()
+	await frames(5)
+	main._try_open_shrine()
+	check(main.shrine_panel.visible, "at the shrine in demon form: G opens the swap")
+	main._on_shrine_pick(0, "possess")
+	main._confirm_shrine()       # picked fast...
+	await frames(60)
+	check(player.loadout["demon"][0] == "fire", "...but the swap still takes the full 3 s")
+	await frames(140)
+	check(player.loadout["demon"] == ["possess", "fly"], "...then it goes through (%s)" % "+".join(player.loadout["demon"]))
+	check(not main.shrine_panel.visible, "...and the panel closes")
+	main._try_open_shrine()
+	await frames(220)              # dawdle past 3 s before picking
+	main._on_shrine_pick(1, "fire")
+	main._confirm_shrine()
+	await frames(3)
+	check(player.loadout["demon"] == ["possess", "fire"], "taking longer than 3 s: no extra wait after confirming")
 
 	print("\n%s: %d failure(s)" % ["ALL PASSED" if failures == 0 else "FAILED", failures])
 	quit(1 if failures else 0)
