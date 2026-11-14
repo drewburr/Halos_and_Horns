@@ -3,7 +3,7 @@
 A free, non-commercial prop-hunt game: demons possess everyday objects to hide, angels hunt them down.
 Passion project, inspired by Witch It.
 
-## Status: version 0.3.2, Fly is a skill
+## Status: version 0.3.3, Fly is a skill
 
 One small test map, placeholder shapes for everything.
 
@@ -34,7 +34,7 @@ Windows and Linux players can play together.
 
 ## Hosting and joining
 
-**Hosting:** click **Host a game**. The lobby shows the addresses friends should use. Click **Start round** once at least 2 players are in.
+**Hosting:** click **Host a game**. The lobby shows the addresses friends should use. Pick the hiding and hunting times, then click **Start round** once at least 2 players are in.
 - Friends on the same Wi-Fi use the "same house" address. That needs no setup.
 - Friends over the internet use your internet address, which needs **UDP port 7777 forwarded** on your router to your PC. Windows will also ask to allow the game through the firewall: allow it. On Linux, if you run a firewall, allow UDP port 7777 yourself.
 

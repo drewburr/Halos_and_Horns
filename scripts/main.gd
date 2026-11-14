@@ -19,9 +19,11 @@ const Vortex = preload("res://scripts/vortex.gd")
 const Rope = preload("res://scripts/rope.gd")
 const Projectile = preload("res://scripts/projectile.gd")
 
-const GAME_VERSION := "0.3.2 (no more sky hooks)"
+const GAME_VERSION := "0.3.3 (round timer picker)"
 const HIDE_TIME := 30.0
 const HUNT_TIME := 180.0
+const HIDE_CHOICES := [15.0, 30.0, 45.0, 60.0, 90.0]
+const HUNT_CHOICES := [120.0, 180.0, 300.0, 600.0, 900.0, 1800.0]
 const BOT_COUNT := 3
 const PROP_COUNT := 45
 const MAP_HALF := 28.0
@@ -46,6 +48,8 @@ var _chicken_check := 0.0
 var _possessions := {}       # who possesses which prop: user key -> prop index (decider only)
 var _loadout_buttons: Array = []   # [team, slot, OptionButton]
 var skill_label: Label
+var lobby_times: VBoxContainer   # host's round-length pickers
+var _time_pick := {}            # picker label -> chosen index
 var hold_bar: ColorRect          # "returning to demon form" progress, under the crosshair
 var hold_fill: ColorRect
 var player: Player
@@ -459,11 +463,34 @@ func _build_lobby() -> void:
 	lobby_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(lobby_info)
 	_build_loadout(box)
+	# Host only: how long the hiding and hunting phases last.
+	lobby_times = VBoxContainer.new()
+	box.add_child(lobby_times)
+	_time_choice(lobby_times, "Hiding time", HIDE_CHOICES, 1)
+	_time_choice(lobby_times, "Hunting time", HUNT_CHOICES, 2)
 	lobby_start = _button(box, "Start round", func():
 		if net:
+			net.hide_time = HIDE_CHOICES[_time_pick["Hiding time"]]
+			net.hunt_time = HUNT_CHOICES[_time_pick["Hunting time"]]
 			net.start_round())
 	_button(box, "Leave", func(): _show_menu(""))
 	lobby_panel.visible = false
+
+
+func _time_choice(parent: Control, label_text: String, choices: Array, default_index: int) -> void:
+	var row := HBoxContainer.new()
+	var lbl := Label.new()
+	lbl.text = label_text
+	lbl.custom_minimum_size.x = 140
+	row.add_child(lbl)
+	var ob := OptionButton.new()
+	for secs in choices:
+		ob.add_item("%d:%02d" % [int(secs) / 60, int(secs) % 60])
+	ob.select(default_index)
+	_time_pick[label_text] = default_index
+	ob.item_selected.connect(func(i): _time_pick[label_text] = i)
+	row.add_child(ob)
+	parent.add_child(row)
 
 
 # Pick 2 skills per side. Shown on the main menu and in the lobby (between rounds).
@@ -766,6 +793,7 @@ func online_lobby(names: Array, host_phase: String) -> void:
 	lobby_players.text = "Players (%d):\n  %s" % [names.size(), "\n  ".join(_lobby_lines(names))]
 	var is_host: bool = net != null and net.is_host
 	lobby_start.visible = is_host
+	lobby_times.visible = is_host
 	if is_host:
 		lobby_start.disabled = names.size() < 2
 		lobby_start.text = "Start round" if names.size() >= 2 else "Start round (need at least 2 players)"
