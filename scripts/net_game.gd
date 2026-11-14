@@ -17,10 +17,10 @@ const PropLib = preload("res://scripts/prop_library.gd")
 const Effects = preload("res://scripts/effects.gd")
 const Skills = preload("res://scripts/skills.gd")
 
-const PROTOCOL_VERSION := 5      # (old) kept for reference; joining now checks GAME_BUILD
-# Every release gets a new number here, and only the exact same build can join.
-# (Sent where older versions sent PROTOCOL_VERSION, so they get a clear message too.)
-const GAME_BUILD := 410
+const PROTOCOL_VERSION := 5      # (old) kept for reference; joining now checks main.game_build
+# Only the exact same build can join. The build number comes from the release tag
+# (see game_build in main.gd), and is sent where older versions sent PROTOCOL_VERSION,
+# so they get a clear message too.
 const DEFAULT_PORT := 7777
 const MAX_PLAYERS := 16
 const SEND_RATE := 30.0          # joined players report their position this many times a second
@@ -87,7 +87,7 @@ func join(address: String, port: int, player_name: String) -> Error:
 	if err != OK:
 		return err
 	multiplayer.multiplayer_peer = peer
-	multiplayer.connected_to_server.connect(func(): c_hello.rpc_id(1, player_name, GAME_BUILD,
+	multiplayer.connected_to_server.connect(func(): c_hello.rpc_id(1, player_name, main.game_build,
 			main.loadout["angel"], main.loadout["demon"]))
 	multiplayer.connection_failed.connect(func(): main.online_disconnected("Couldn't connect. Check the address, and that the host's port is open."))
 	multiplayer.server_disconnected.connect(func(): main.online_disconnected("The host left the game."))
@@ -204,8 +204,8 @@ func c_hello(player_name: String, version: int, angel_skills: Array, demon_skill
 			if multiplayer.multiplayer_peer:
 				multiplayer.multiplayer_peer.disconnect_peer(id))
 		return
-	if version != GAME_BUILD:
-		s_kicked.rpc_id(id, "Version mismatch: the host is running version %s. Download that version to join." % main.GAME_VERSION)
+	if version != main.game_build:
+		s_kicked.rpc_id(id, "Version mismatch: the host is running version %s. Download that version to join." % main.game_version)
 		get_tree().create_timer(0.5).timeout.connect(func():
 			if multiplayer.multiplayer_peer:
 				multiplayer.multiplayer_peer.disconnect_peer(id))

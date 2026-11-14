@@ -34,6 +34,12 @@ chmod +x HalosAndHorns.x86_64
 
 Windows and Linux players can play together.
 
+## Updating
+
+When a newer version is out, the main menu shows an **Update to version ...** button. Click it and the game downloads the new version, replaces itself and restarts. If that can't work (for example the game sits in a folder it isn't allowed to change), the button opens the download page instead.
+
+Making a release (developers): publish a GitHub release tagged like `v0.4.1`. The tag is the version: the build stamps it into the game, so there is no version number to change in the source. Run from source, the game calls itself version "dev".
+
 ## Hosting and joining
 
 **Hosting:** click **Host a game**. The lobby shows the addresses friends should use. Pick the hiding and hunting times, then click **Start round** once at least 2 players are in.
@@ -83,6 +89,7 @@ The host is the referee. It decides every hit (other players' throws are only vi
 - `godot --headless -s res://tests/test_gameplay.gd`: practice mode, movement, stamina, taunts.
 - `godot --headless -s res://tests/test_skills.gd`: flying, possess vs transform, per-form health and speed, every angel tool.
 - `GODOT=godot tests/test_multiplayer.sh`: plays a whole 5-player online match with bots, including a cheater, and checks the results and that no names leak.
+- `GODOT=godot tests/test_updater.sh`: exports two builds and checks the older one updates itself to the newer one and restarts (Linux only).
 
 ## License
 
