@@ -310,5 +310,16 @@ func _run() -> void:
 	player.test_input = {}
 	check(bob_max - bob_min > 0.02 and bob_max - bob_min < 0.2,
 			"first-person head bob while walking (%.3f m)" % (bob_max - bob_min))
+	# Banned names (spacing, l33t, look-alike letters...) are refused; normal names aren't.
+	var N = load("res://scripts/net_game.gd")
+	var blocked := true
+	for n in ["Dick Bubble", "D1ck Bubbl3", "d i c k b u b b l e", "Diiick Buuubble", "xXDickBubbleXx", "DickBBLs", "DІck Bubble"]:
+		blocked = blocked and not N.name_ok(n)
+	check(blocked, "banned names are refused, however they're spelled")
+	var allowed := true
+	for n in ["Theo", "Dickens", "Bubbles", "Big Bubble", "Benedict", "Bubba"]:
+		allowed = allowed and N.name_ok(n)
+	check(allowed, "...but normal names are fine")
+
 	print("\n%s: %d failure(s)" % ["ALL PASSED" if failures == 0 else "FAILED", failures])
 	quit(1 if failures else 0)

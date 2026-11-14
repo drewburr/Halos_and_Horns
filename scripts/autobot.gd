@@ -3,10 +3,11 @@
 #   Demons wander off and possess a random prop, then taunt now and then.
 #   Angels walk toward the nearest demon and throw at it.
 # Prints "BOT: ..." lines that the multiplayer test reads.
-# Options: --skills=chicken,vacuum (angel loadout). --cheat=teleport,fly tries to jump
+# Options: --skills=cherub,vacuum (that side's loadout). --cheat=teleport,fly tries to jump
 # out of bounds once, and/or to fly forever (the host should refuse both).
 extends Node
 
+const Skills = preload("res://scripts/skills.gd")
 const PropLib = preload("res://scripts/prop_library.gd")
 
 var main
@@ -46,9 +47,11 @@ func _physics_process(delta: float) -> void:
 		p.hit_confirmed.connect(func(): _misses = 0)
 	if main.net and not _loadout_sent:
 		_loadout_sent = true
-		if options.has("skills"):
-			main.loadout["angel"] = Array(options["skills"].split(","))
 		main.loadout["demon"] = ["possess", "fly"]
+		if options.has("skills"):
+			var wanted := Array(options["skills"].split(","))
+			var team: String = Skills.SKILLS[wanted[0]]["team"] if Skills.SKILLS.has(wanted[0]) else "angel"
+			main.loadout[team] = wanted
 		main._apply_loadout()
 	# Host: start once enough players are in (--autostart=N).
 	if main.net and main.net.is_host and options.has("autostart") \
@@ -127,6 +130,7 @@ func _physics_process(delta: float) -> void:
 func _play_demon(delta: float, p) -> void:
 	if _hidden:
 		p.test_input = {}
+		_try_fire(p)
 		return
 	_fly_time += delta
 	if _fly_time < 0.8:
@@ -165,6 +169,20 @@ func _play_demon(delta: float, p) -> void:
 	log_line("hiding as a copy of a " + p.possessed_type)
 
 
+# Hidden demon with Hellfire: once the hunt is on, fling it at a nearby angel.
+func _try_fire(p) -> void:
+	var slot: int = p.loadout["demon"].find("fire")
+	if slot < 0 or main.state != main.State.HUNTING or _used.has("fire"):
+		return
+	for eid in main.net.remotes:
+		var r = main.net.remotes[eid]
+		if r.role == "angel" and r.visible and r.global_position.distance_to(p.global_position) < 12.0:
+			_aim(p, r.global_position + Vector3.UP * 0.2)
+			if p.use_skill(slot):
+				_log_once("fire")
+			return
+
+
 func _aim(p, point: Vector3) -> void:
 	var to: Vector3 = point - p.global_position
 	p.rotation.y = atan2(-to.x, -to.z)
@@ -177,6 +195,10 @@ func _play_angel(delta: float, p) -> void:
 	if p.frozen or options.has("lazy"):
 		p.test_input = {}
 		return
+	# Mid-leap and coming down: Cloud Stomp.
+	var leap_slot: int = p.loadout["angel"].find("leap")
+	if leap_slot >= 0 and p._leaping and not p._stomping and p.velocity.y < 0.0 and p.use_skill(leap_slot):
+		_log_once("stomp")
 	var target = null
 	var best := INF
 	for eid in main.net.remotes:
@@ -191,6 +213,8 @@ func _play_angel(delta: float, p) -> void:
 		return
 	var to: Vector3 = target.global_position - p.global_position
 	p.rotation.y = atan2(-to.x, -to.z)   # face it (-Z is forward)
+	if leap_slot >= 0 and best < 14.0 and p.is_on_floor() and p.use_skill(leap_slot):
+		_log_once("leap")
 	var aim_point: Vector3 = target.global_position + Vector3.UP * 0.35
 	var eye: Vector3 = p.camera.global_position
 	var flat := Vector2(aim_point.x - eye.x, aim_point.z - eye.z).length()

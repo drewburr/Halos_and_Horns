@@ -118,6 +118,10 @@ var _grapple_target := Vector3.ZERO
 var _grapple_time := 0.0
 var _pull_target := Vector3.ZERO
 var _pull_time := 0.0
+var burning := 0.0            # seconds left standing in demon fire (main refreshes it)
+var _move_dir := Vector2.ZERO # last movement keys held (Holy Leap launches that way)
+var _leaping := false         # in the air from Holy Leap: strong steering, Cloud Stomp ready
+var _stomping := false
 
 var shape_node: CollisionShape3D
 var visual_root: Node3D
@@ -175,6 +179,9 @@ func set_role(new_role: String) -> void:
 	melee_cd = 0.0
 	_grapple_time = 0.0
 	_pull_time = 0.0
+	burning = 0.0
+	_leaping = false
+	_stomping = false
 	_apply_form()
 
 
@@ -296,6 +303,7 @@ func _physics_process(delta: float) -> void:
 		want_run = Input.is_action_pressed("run")
 		want_jump = Input.is_action_just_pressed("jump")
 		want_fly = _hold_key_down("fly")
+	_move_dir = input_dir
 
 	# Hatred always refills; flying spends it faster than it refills (unless boosted).
 	if role == "demon":
@@ -335,6 +343,8 @@ func _physics_process(delta: float) -> void:
 		direction.y = 0.0
 		direction = direction.normalized()
 		var speed := ANGEL_SPEED if role == "angel" else PropLib.speed(possessed_type)
+		if burning > 0.0:
+			speed *= Skills.FIRE_SLOW
 		if running:
 			speed *= RUN_MULTIPLIER
 		elif sneaking:
@@ -346,7 +356,7 @@ func _physics_process(delta: float) -> void:
 			rate = 0.0                     # no keys held in the air: keep your momentum
 			target = current
 		elif not on_floor:
-			rate = tuning["air_accel"]
+			rate = Skills.LEAP_AIR_ACCEL if _leaping else tuning["air_accel"]
 		elif target.length() < current.length():
 			rate = tuning["ground_decel"]
 		else:
@@ -354,8 +364,19 @@ func _physics_process(delta: float) -> void:
 		current = current.move_toward(target, rate * delta)
 		velocity.x = current.x
 		velocity.z = current.y
+	if _stomping:
+		velocity = Vector3(0.0, -Skills.STOMP_SPEED, 0.0)
 	move_and_slide()
 	current = Vector2(velocity.x, velocity.z)
+	if is_on_floor() and (_leaping or _stomping) and velocity.y <= 0.0:
+		if _stomping:
+			# Cloud Stomp landed: the host / practice game decides who it hurts.
+			skill_used.emit("stomp", global_position, Vector3.DOWN, global_position, -1)
+		_leaping = false
+		_stomping = false
+	if burning > 0.0:
+		burning -= delta
+		throw_stamina = maxf(throw_stamina - Skills.FIRE_BLESSING_BURN * delta, 0.0)
 
 	_update_head_bob(delta, current.length())
 	_update_throw_stamina(delta)
@@ -429,9 +450,15 @@ func is_grappling() -> bool:
 # everything else is decided by the host / practice game via skill_used.
 func use_skill(slot: int) -> bool:
 	var id: String = loadout[role][slot]
+	# Holy Leap's key again, mid-leap: Cloud Stomp (its cooldown is already running).
+	if id == "leap" and _leaping and not _stomping and not is_on_floor() and not frozen:
+		_stomping = true
+		return true
 	if id == "" or frozen or skill_cd.get(id, 0.0) > 0.0 or Skills.SKILLS[id].get("hold", false):
 		return false
 	if role == "demon" and skill_lock > 0.0:
+		return false
+	if hatred < Skills.hatred_cost(id) and role == "demon":
 		return false
 	var origin := camera.global_position
 	var dir := -camera.global_transform.basis.z
@@ -453,17 +480,28 @@ func use_skill(slot: int) -> bool:
 				_grapple_target = point - dir * 0.5
 				_grapple_time = global_position.distance_to(_grapple_target) / Skills.GRAPPLE_SPEED + 0.3
 				_pull_time = 0.0
-		"chicken":
-			var hit := _aim_ray(Skills.CHICKEN_RANGE)
-			point = hit["position"] if not hit.is_empty() else origin + dir * Skills.CHICKEN_RANGE
+		"cherub":
+			var hit := _aim_ray(Skills.CHERUB_RANGE)
+			point = hit["position"] if not hit.is_empty() else origin + dir * Skills.CHERUB_RANGE
 		"vacuum":
 			point = origin + dir
 		"leap":
 			if not is_on_floor():
 				return false
-			var f := -global_transform.basis.z
+			# Launch the way you're holding (or forward), then steer hard in the air.
+			var push := global_transform.basis * Vector3(_move_dir.x, 0.0, _move_dir.y)
+			push.y = 0.0
+			if push.length() < 0.1:
+				push = -global_transform.basis.z
 			velocity.y = Skills.LEAP_VELOCITY
-			velocity += Vector3(f.x, 0.0, f.z) * 4.0
+			var flat := push.normalized() * Skills.LEAP_PUSH
+			velocity.x = flat.x
+			velocity.z = flat.z
+			_leaping = true
+		"fire":
+			var hit := _aim_ray(Skills.FIRE_RANGE)
+			point = hit["position"] if not hit.is_empty() else origin + dir * Skills.FIRE_RANGE
+			hatred -= Skills.hatred_cost(id)
 	skill_cd[id] = Skills.cooldown(id)
 	skill_used.emit(id, origin, dir, point, index)
 	return true
@@ -510,7 +548,7 @@ func _update_sprint(delta: float, wants_to_run: bool) -> void:
 func _update_throw_stamina(delta: float) -> void:
 	if _throw_regen_wait > 0.0:
 		_throw_regen_wait -= delta
-	else:
+	elif burning <= 0.0:   # no refilling while standing in demon fire
 		throw_stamina = minf(throw_stamina + THROW_REGEN * throw_regen_multiplier * delta, THROW_STAMINA_MAX)
 
 

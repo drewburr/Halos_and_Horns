@@ -17,7 +17,10 @@ const PropLib = preload("res://scripts/prop_library.gd")
 const Effects = preload("res://scripts/effects.gd")
 const Skills = preload("res://scripts/skills.gd")
 
-const PROTOCOL_VERSION := 5      # bump whenever online messages change; mismatches can't join
+const PROTOCOL_VERSION := 5      # (old) kept for reference; joining now checks GAME_BUILD
+# Every release gets a new number here, and only the exact same build can join.
+# (Sent where older versions sent PROTOCOL_VERSION, so they get a clear message too.)
+const GAME_BUILD := 400
 const DEFAULT_PORT := 7777
 const MAX_PLAYERS := 16
 const SEND_RATE := 30.0          # joined players report their position this many times a second
@@ -83,7 +86,7 @@ func join(address: String, port: int, player_name: String) -> Error:
 	if err != OK:
 		return err
 	multiplayer.multiplayer_peer = peer
-	multiplayer.connected_to_server.connect(func(): c_hello.rpc_id(1, player_name, PROTOCOL_VERSION,
+	multiplayer.connected_to_server.connect(func(): c_hello.rpc_id(1, player_name, GAME_BUILD,
 			main.loadout["angel"], main.loadout["demon"]))
 	multiplayer.connection_failed.connect(func(): main.online_disconnected("Couldn't connect. Check the address, and that the host's port is open."))
 	multiplayer.server_disconnected.connect(func(): main.online_disconnected("The host left the game."))
@@ -124,6 +127,30 @@ func _clean_name(n: String) -> String:
 	return n
 
 
+# Some names just aren't allowed (ported from Slayer_Next_Gen, then toughened up:
+# spacing, punctuation, l33t numbers, look-alike letters and stretched-out
+# letters all still count).
+const db := ["DICK BUBBLE", "DICK BBL"]
+const _LOOKALIKE := {"0": "O", "1": "I", "!": "I", "|": "I", "3": "E", "4": "A", "@": "A",
+	"5": "S", "$": "S", "7": "T", "8": "B", "6": "G", "9": "G",
+	"А": "A", "В": "B", "С": "C", "Е": "E", "К": "K", "О": "O", "Р": "P", "Т": "T",
+	"Х": "X", "І": "I", "İ": "I", "Ι": "I", "Κ": "K", "Β": "B", "Ϲ": "C", "Ꮯ": "C"}
+
+
+static func name_ok(n: String) -> bool:
+	var flat := ""
+	for ch in n.to_upper():
+		ch = _LOOKALIKE.get(ch, ch)
+		if ch >= "A" and ch <= "Z" and (flat == "" or flat[-1] != ch):   # letters only, no stretching
+			flat += ch
+	var re := RegEx.new()
+	re.compile("DI(CK|C|K)B(UB|U?B?L)")
+	return re.search(flat) == null
+
+
+const NOPE := "No, Bubba! Your NAME, buddy! The thing your mom yells across the yard. Try again!"
+
+
 func _new_eid() -> int:
 	# Random ids, so an id can't be matched to a player's join order.
 	var e := randi_range(1000, 999999)
@@ -138,8 +165,14 @@ func c_hello(player_name: String, version: int, angel_skills: Array, demon_skill
 	if not is_host:
 		return
 	var id := multiplayer.get_remote_sender_id()
-	if version != PROTOCOL_VERSION:
-		s_kicked.rpc_id(id, "Version mismatch: you and the host have different versions of the game.")
+	if not name_ok(player_name):
+		s_kicked.rpc_id(id, NOPE)
+		get_tree().create_timer(0.5).timeout.connect(func():
+			if multiplayer.multiplayer_peer:
+				multiplayer.multiplayer_peer.disconnect_peer(id))
+		return
+	if version != GAME_BUILD:
+		s_kicked.rpc_id(id, "Version mismatch: the host is running version %s. Download that version to join." % main.GAME_VERSION)
 		get_tree().create_timer(0.5).timeout.connect(func():
 			if multiplayer.multiplayer_peer:
 				multiplayer.multiplayer_peer.disconnect_peer(id))
@@ -266,7 +299,8 @@ func _place(rec: Dictionary, pos: Vector3) -> void:
 
 
 # What one player is allowed to know about everyone else: entity id, role,
-# and a name ONLY when they're on the same team.
+# and a name ONLY for fellow angels. Demons never see any names, not even
+# each other's (a demon's game could otherwise give teammates away to a cheater).
 func _roster_for(viewer_id: int) -> Array:
 	var viewer_role: String = peers[viewer_id]["role"]
 	var roster := []
@@ -274,7 +308,7 @@ func _roster_for(viewer_id: int) -> Array:
 		var rec: Dictionary = peers[id]
 		if id == viewer_id or not rec["in_round"]:
 			continue
-		var shown_name: String = rec["name"] if rec["role"] == viewer_role else ""
+		var shown_name: String = rec["name"] if rec["role"] == viewer_role and viewer_role == "angel" else ""
 		roster.append([rec["eid"], shown_name, rec["role"]])
 	return roster
 
@@ -318,8 +352,7 @@ func _ensure_host_remote(id: int) -> void:
 	var r := _get_or_make_remote(rec["eid"])
 	r.snap = true     # the host needs exact positions for hit checks
 	r.net = self
-	if rec["role"] == peers[1]["role"]:
-		r.set_name_for_teammate(rec["name"])
+	r.set_name_for_teammate(rec["name"] if rec["role"] == peers[1]["role"] and rec["role"] == "angel" else "")
 	r.apply_state(rec["pos"], rec["yaw"], rec["form"], rec["role"])
 
 
@@ -841,8 +874,13 @@ func _skill_allowed(id: int, skill: String, origin: Vector3) -> bool:
 	var t := now()
 	if not rec["in_round"] or not Skills.SKILLS.has(skill):
 		return false
-	if Skills.SKILLS[skill]["team"] != rec["role"] or not skill in rec["loadout"][rec["role"]]:
+	var picked: String = Skills.SKILLS[skill].get("part_of", skill)   # Cloud Stomp comes with Holy Leap
+	if Skills.SKILLS[skill]["team"] != rec["role"] or not picked in rec["loadout"][rec["role"]]:
 		return false
+	if skill == "stomp":
+		if t > rec.get("leap_at", -100.0) + 6.0:
+			return false    # one stomp per leap, soon after it
+		rec["leap_at"] = -100.0
 	if rec["role"] == "angel" and phase != "hunting":
 		return false
 	if rec["role"] == "demon" and (phase != "hiding" and phase != "hunting" or t < rec["locked_until"]):
@@ -852,6 +890,14 @@ func _skill_allowed(id: int, skill: String, origin: Vector3) -> bool:
 	if not _origin_ok(rec, origin):
 		_note_cheat(id, "using a skill from somewhere they aren't")
 		return false
+	var cost := Skills.hatred_cost(skill)
+	if cost > 0.0 and id != 1:   # the host's own Hatred is counted on its own player
+		if rec["hatred"] < cost - 10.0:   # the mirror lags a little behind the player's own count
+			_note_cheat(id, "casting %s without enough Hatred" % skill)
+			return false
+		rec["hatred"] -= cost
+	if skill == "leap":
+		rec["leap_at"] = t
 	rec["skill_ready"][skill] = t + Skills.cooldown(skill)
 	return true
 
@@ -874,7 +920,7 @@ func c_skill(skill: String, origin: Vector3, dir: Vector3, point: Vector3, index
 	var id := multiplayer.get_remote_sender_id()
 	if not _skill_allowed(id, skill, origin):
 		return
-	if skill == "chicken" and point.distance_to(origin) > Skills.CHICKEN_RANGE + 2.0:
+	if skill == "cherub" and point.distance_to(origin) > Skills.CHERUB_RANGE + 2.0:
 		return
 	var rec: Dictionary = peers[id]
 	if not remotes.has(rec["eid"]):

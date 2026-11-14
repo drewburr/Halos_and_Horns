@@ -215,21 +215,21 @@ func _run() -> void:
 	main.start_round()
 	main.time_left = 0.0
 	await frames(5)
-	player.loadout["angel"] = ["chicken", "vacuum"]
+	player.loadout["angel"] = ["cherub", "vacuum"]
 	var bot = get_nodes_in_group("demon")[0]
 
-	# Chicken: near a demon it alarms, far away it doesn't.
-	main.authority_skill(player, 0, "chicken", player.global_position, Vector3.FORWARD, bot.global_position + Vector3(2, 0, 0), -1)
-	main.authority_skill(player, 0, "chicken", player.global_position, Vector3.FORWARD, Vector3(0, 0, -26), -1)
+	# Cherub: near a demon it alarms, far away it doesn't.
+	main.authority_skill(player, 0, "cherub", player.global_position, Vector3.FORWARD, bot.global_position + Vector3(2, 0, 0), -1)
+	main.authority_skill(player, 0, "cherub", player.global_position, Vector3.FORWARD, Vector3(0, 0, -26), -1)
 	await frames(30)
-	var near_c = main.chickens.get(1)
-	var far_c = main.chickens.get(2)
-	check(near_c != null and near_c.alarmed, "a chicken near a hidden demon squawks")
-	check(far_c != null and not far_c.alarmed, "a chicken with no demon nearby stays calm")
+	var near_c = main.cherubs.get(1)
+	var far_c = main.cherubs.get(2)
+	check(near_c != null and near_c.alarmed, "a cherub near a hidden demon squawks")
+	check(far_c != null and not far_c.alarmed, "a cherub with no demon nearby stays calm")
 	check(near_c != null and near_c._bubble.visible, "...and shows its detection bubble")
-	check(far_c != null and not far_c._bubble.visible, "...a calm chicken shows no bubble, it's just a chicken")
+	check(far_c != null and not far_c._bubble.visible, "...a calm cherub shows no bubble, it's just a cherub")
 
-	# Knock the calm chicken down the "hallway" with a blessing.
+	# Knock the calm cherub down the "hallway" with a blessing.
 	if far_c != null:
 		var c_start: Vector3 = far_c.global_position
 		var shot = preload("res://scripts/projectile.gd").new()
@@ -239,9 +239,9 @@ func _run() -> void:
 		shot.global_position = c_start + Vector3(-3, 0.4, 0)
 		await frames(150)
 		var moved: float = far_c.global_position.x - c_start.x
-		check(moved > 6.0, "a blessing sends the chicken skidding (%.1f m)" % moved)
+		check(moved > 6.0, "a blessing sends the cherub skidding (%.1f m)" % moved)
 		check(absf(far_c.velocity.x) < 0.3, "...and it slides to a stop")
-		check(main._auth_chickens.has(2) and main._auth_chickens[2]["pos"].distance_to(far_c.global_position) < 0.5,
+		check(main._auth_cherubs.has(2) and main._auth_cherubs[2]["pos"].distance_to(far_c.global_position) < 0.5,
 				"...and it keeps watching from where it landed")
 
 	# Vacuum: pulls nearby props in and yanks the demon.
@@ -326,7 +326,74 @@ func _run() -> void:
 		await frames(1)
 		peak = maxf(peak, player.global_position.y)
 	check(peak - y0 > 3.5, "a magnificent jump (%.1f m)" % (peak - y0))
+	for i in 120:
+		if player.is_on_floor():
+			break
+		await frames(1)
 	check(not player.use_skill(1), "skills have cooldowns")
+
+	# Steering a leap: holding a direction carries you that way.
+	player.skill_cd.clear()
+	player.rotation = Vector3.ZERO
+	await frames(5)
+	var x0: float = player.global_position.x
+	player.test_input = {"dir": Vector2(1, 0)}
+	await frames(2)
+	player.use_skill(1)
+	await frames(50)
+	check(player.global_position.x - x0 > 4.0, "a leap goes where you steer it (%.1f m sideways)" % (player.global_position.x - x0))
+	player.test_input = {}
+	await frames(60)
+
+	# Cloud Stomp: press the leap key again mid-air, slam down, hurt demons nearby.
+	var victim = null
+	for b in get_nodes_in_group("demon"):
+		if b.health > 0:
+			victim = b
+	check(victim != null, "a test demon to stomp on")
+	if victim:
+		player.global_position = victim.global_position + Vector3(2.0, 0.1, 0)
+		player.velocity = Vector3.ZERO
+		await frames(10)
+		player.skill_cd.clear()
+		var hp_before: int = victim.health
+		check(player.use_skill(1), "leap again")
+		await frames(12)
+		check(player.use_skill(1), "...press it again mid-air: Cloud Stomp")
+		var t_stomp := 0
+		while not player.is_on_floor() and t_stomp < 60:
+			await frames(1)
+			t_stomp += 1
+		await frames(3)
+		check(t_stomp < 20, "...slams straight down (%d frames)" % t_stomp)
+		check(victim.health == hp_before - Skills.STOMP_DAMAGE, "...and hurts the demon it lands next to")
+		check(not player.use_skill(1), "...one stomp per leap (the cooldown is still running)")
+
+	# Hellfire (decided by the practice game here): an angel in it is slowed and burns blessings.
+	player.global_position = Vector3(-20, 0.1, -20)
+	player.velocity = Vector3.ZERO
+	player.throw_stamina = player.THROW_STAMINA_MAX
+	await frames(10)
+	var feet: Vector3 = player.global_position
+	main.authority_skill(player, 0, "fire", feet + Vector3(0, 1.5, 6), Vector3(0, -0.24, -0.97), feet, -1)
+	await frames(45)
+	check(player.burning > 0.0, "standing in Hellfire sets an angel burning")
+	check(player.throw_stamina < player.THROW_STAMINA_MAX - 15.0, "...which burns away blessing stamina")
+	player.global_position = feet + Vector3(5, 0, 0)
+	await frames(30)
+	check(player.burning <= 0.0, "...and stepping out stops it")
+
+	# Demons pay Hatred for Hellfire.
+	player.set_role("demon")
+	player.loadout["demon"] = ["fire", "fly"]
+	player.hatred = 20.0
+	check(not player.use_skill(0), "not enough Hatred: no Hellfire")
+	player.hatred = 100.0
+	var fires_before: int = main.fires.size()
+	check(player.use_skill(0), "Hellfire with a full bar")
+	check(player.hatred < 70.0, "...costs Hatred (%.0f left)" % player.hatred)
+	await frames(5)
+	check(main.fires.size() > fires_before, "...and lights a fire")
 
 	print("\n%s: %d failure(s)" % ["ALL PASSED" if failures == 0 else "FAILED", failures])
 	quit(1 if failures else 0)

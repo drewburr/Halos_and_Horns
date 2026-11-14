@@ -14,12 +14,13 @@ const NetGame = preload("res://scripts/net_game.gd")
 const Effects = preload("res://scripts/effects.gd")
 const Autobot = preload("res://scripts/autobot.gd")
 const Skills = preload("res://scripts/skills.gd")
-const Chicken = preload("res://scripts/chicken.gd")
+const Cherub = preload("res://scripts/cherub.gd")
+const Fire = preload("res://scripts/fire.gd")
 const Vortex = preload("res://scripts/vortex.gd")
 const Rope = preload("res://scripts/rope.gd")
 const Projectile = preload("res://scripts/projectile.gd")
 
-const GAME_VERSION := "0.3.3 (round timer picker)"
+const GAME_VERSION := "0.4.0 (Hellfire)"
 const HIDE_TIME := 30.0
 const HUNT_TIME := 180.0
 const HIDE_CHOICES := [15.0, 30.0, 45.0, 60.0, 90.0]
@@ -41,10 +42,12 @@ var bots_left := 0           # demons left (test demons in practice, players onl
 var my_health := 1.0         # online demons: fraction of health left (same fraction in every form)
 var loadout := Skills.DEFAULTS.duplicate(true)   # your chosen skills (saved)
 var props: Array = []        # this round's map props, by index (same on every computer)
-var chickens := {}           # chicken id -> Chicken node (visuals, everyone)
-var _auth_chickens := {}     # chicken id -> {pos, until, alarmed} (decider only)
-var _chicken_counter := 0
-var _chicken_check := 0.0
+var cherubs := {}           # cherub id -> Cherub node (visuals, everyone)
+var _auth_cherubs := {}     # cherub id -> {pos, until, alarmed} (decider only)
+var _cherub_counter := 0
+var fires := {}              # fire id -> Fire node (everyone; angels check if they're standing in one)
+var _fire_counter := 0
+var _cherub_check := 0.0
 var _possessions := {}       # who possesses which prop: user key -> prop index (decider only)
 var _loadout_buttons: Array = []   # [team, slot, OptionButton]
 var skill_label: Label
@@ -293,7 +296,7 @@ func _add_invisible(center: Vector3, size: Vector3) -> void:
 	shape_node.shape = box
 	body.add_child(shape_node)
 	body.position = center
-	# Its own layer: it stops bodies (players, chickens) but aim rays, hooks and
+	# Its own layer: it stops bodies (players, cherubs) but aim rays, hooks and
 	# throws go right through, so you can't hook the sky.
 	body.collision_layer = BOUNDS_LAYER
 	body.collision_mask = 0
@@ -342,8 +345,9 @@ func _reset_round_props(seed_value: int) -> void:
 	add_child(round_root)
 	used_spots.clear()
 	props.clear()
-	chickens.clear()
-	_auth_chickens.clear()
+	cherubs.clear()
+	_auth_cherubs.clear()
+	fires.clear()
 	_possessions.clear()
 	rng.seed = seed_value
 	var types := PropLib.type_names()
@@ -617,6 +621,9 @@ func _make_net() -> void:
 
 
 func _on_host_pressed() -> void:
+	if not NetGame.name_ok(name_edit.text):
+		menu_status.text = NetGame.NOPE
+		return
 	_save_settings()
 	_make_net()
 	var err: Error = net.host(_port(), name_edit.text)
@@ -635,6 +642,9 @@ func _on_join_pressed() -> void:
 	var address := address_edit.text.strip_edges()
 	if address == "":
 		menu_status.text = "Type the host's address first."
+		return
+	if not NetGame.name_ok(name_edit.text):
+		menu_status.text = NetGame.NOPE
 		return
 	_save_settings()
 	_make_net()
@@ -765,7 +775,8 @@ func _process(delta: float) -> void:
 	elif mode == "online":
 		time_left = maxf(time_left - delta, 0.0)   # the host decides when phases change
 	if is_authority():
-		_check_chickens(delta)
+		_check_cherubs(delta)
+	_check_burning()
 	_update_hud(delta)
 
 
@@ -1011,12 +1022,30 @@ func demon_targets() -> Array:
 func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, dir: Vector3,
 		point: Vector3, index: int) -> void:
 	match id:
-		"chicken":
-			_chicken_counter += 1
+		"cherub":
+			_cherub_counter += 1
 			var pos := ground_below(point)
-			_auth_chickens[_chicken_counter] = {"pos": pos, "until": Time.get_ticks_msec() / 1000.0 + Skills.CHICKEN_LIFETIME, "alarmed": false}
-			broadcast_fx("chicken", [_chicken_counter, pos])
-			print("[decider] chicken dropped")
+			_auth_cherubs[_cherub_counter] = {"pos": pos, "until": Time.get_ticks_msec() / 1000.0 + Skills.CHERUB_LIFETIME, "alarmed": false}
+			broadcast_fx("cherub", [_cherub_counter, pos])
+			print("[decider] cherub dropped")
+		"fire":
+			if point.distance_to(origin) > Skills.FIRE_RANGE + 2.0:
+				return
+			_fire_counter += 1
+			var spot := ground_below(point - dir * 0.3)
+			broadcast_fx("fire", [_fire_counter, user.global_position + Vector3.UP * 1.0, spot])
+			print("[decider] hellfire lit")
+		"stomp":
+			var hurt := 0
+			for d in demon_targets():
+				var off: Vector3 = d.global_position - origin
+				if Vector2(off.x, off.z).length() <= Skills.STOMP_RADIUS and absf(off.y) < 2.5 \
+						and d.has_method("take_hit") and d.take_hit(Skills.STOMP_DAMAGE):
+					hurt += 1
+			if hurt > 0 and user.has_method("confirm_hit"):
+				user.confirm_hit()
+			broadcast_fx("stomp", [origin])
+			print("[decider] cloud stomp hit %d demon(s)" % hurt)
 		"vacuum":
 			var orb := _spawn_orb(origin, dir, false)
 			orb.shooter = user
@@ -1111,48 +1140,63 @@ func authority_release(user_key: int, pos: Vector3, yaw: float) -> void:
 	broadcast_fx("prop_shell", [index, pos, yaw])
 
 
-# Decider only: a blessing hit a chicken. Send it skidding the way the shot was going.
-func kick_chicken(cid: int, shot_velocity: Vector3) -> void:
-	if not _auth_chickens.has(cid) or not chickens.has(cid) or not is_instance_valid(chickens[cid]):
+# Decider only: a blessing hit a cherub. Send it skidding the way the shot was going.
+func kick_cherub(cid: int, shot_velocity: Vector3) -> void:
+	if not _auth_cherubs.has(cid) or not cherubs.has(cid) or not is_instance_valid(cherubs[cid]):
 		return
 	var flat := Vector3(shot_velocity.x, 0, shot_velocity.z)
 	if flat.length() < 0.1:
 		return
-	var vel := flat.normalized() * Skills.CHICKEN_KICK_SPEED + Vector3.UP * Skills.CHICKEN_KICK_UP
-	var pos: Vector3 = chickens[cid].global_position + Vector3.UP * 0.05
-	_auth_chickens[cid]["rested"] = false
-	broadcast_fx("chicken_kick", [cid, pos, vel])
-	print("[decider] chicken kicked")
+	var vel := flat.normalized() * Skills.CHERUB_KICK_SPEED + Vector3.UP * Skills.CHERUB_KICK_UP
+	var pos: Vector3 = cherubs[cid].global_position + Vector3.UP * 0.05
+	_auth_cherubs[cid]["rested"] = false
+	broadcast_fx("cherub_kick", [cid, pos, vel])
+	print("[decider] cherub kicked")
 
 
-func _check_chickens(delta: float) -> void:
-	_chicken_check -= delta
-	if _chicken_check > 0.0 or _auth_chickens.is_empty():
+# Our own angel standing in demon fire? (Slowed, blessings burn away.)
+func _check_burning() -> void:
+	if role != "angel" or not (state == State.HIDING or state == State.HUNTING):
 		return
-	_chicken_check = 0.25
+	var me := player.global_position
+	for id in fires.keys():
+		var f = fires[id]
+		if not is_instance_valid(f):
+			fires.erase(id)
+			continue
+		var off: Vector3 = me - f.global_position
+		if f.is_lit() and Vector2(off.x, off.z).length() <= Skills.FIRE_RADIUS and off.y > -0.5 and off.y < 1.5:
+			player.burning = 0.2
+
+
+func _check_cherubs(delta: float) -> void:
+	_cherub_check -= delta
+	if _cherub_check > 0.0 or _auth_cherubs.is_empty():
+		return
+	_cherub_check = 0.25
 	var now := Time.get_ticks_msec() / 1000.0
 	var targets := demon_targets()
-	for cid in _auth_chickens.keys():
-		var c: Dictionary = _auth_chickens[cid]
+	for cid in _auth_cherubs.keys():
+		var c: Dictionary = _auth_cherubs[cid]
 		if now > c["until"]:
-			_auth_chickens.erase(cid)
+			_auth_cherubs.erase(cid)
 			continue
-		var node = chickens.get(cid)
+		var node = cherubs.get(cid)
 		if node != null and is_instance_valid(node):
 			c["pos"] = node.global_position   # it may have been knocked somewhere
 			# Once it comes to rest, tell everyone where it ended up (tiny drift fix).
 			if node.is_on_floor() and node.velocity.length() < 0.2 and not c.get("rested", true):
 				c["rested"] = true
-				broadcast_fx("chicken_kick", [cid, node.global_position, Vector3.ZERO])
+				broadcast_fx("cherub_kick", [cid, node.global_position, Vector3.ZERO])
 		var near := false
 		for d in targets:
-			if d.global_position.distance_to(c["pos"]) <= Skills.CHICKEN_RADIUS:
+			if d.global_position.distance_to(c["pos"]) <= Skills.CHERUB_RADIUS:
 				near = true
 		if near != c["alarmed"]:
 			c["alarmed"] = near
-			broadcast_fx("chicken_alarm", [cid, near])
+			broadcast_fx("cherub_alarm", [cid, near])
 			if near:
-				print("[decider] chicken alarm: demon nearby")
+				print("[decider] cherub alarm: demon nearby")
 
 
 # ---------- effects everyone sees ----------
@@ -1173,22 +1217,31 @@ func _fx_parent() -> Node:
 
 func fx(kind: String, args: Array) -> void:
 	match kind:
-		"chicken":
-			var c := Chicken.new()
-			c.chicken_id = args[0]
+		"cherub":
+			var c := Cherub.new()
+			c.cherub_id = args[0]
 			_fx_parent().add_child(c)
 			c.global_position = args[1]
-			chickens[args[0]] = c
+			cherubs[args[0]] = c
 			if mode != "online" or (net and net.is_host):
-				c.on_kick = kick_chicken
-		"chicken_kick":
-			if chickens.has(args[0]) and is_instance_valid(chickens[args[0]]):
-				chickens[args[0]].launch(args[1], args[2])
-		"chicken_alarm":
-			if chickens.has(args[0]) and is_instance_valid(chickens[args[0]]):
-				chickens[args[0]].alarmed = args[1]
+				c.on_kick = kick_cherub
+		"cherub_kick":
+			if cherubs.has(args[0]) and is_instance_valid(cherubs[args[0]]):
+				cherubs[args[0]].launch(args[1], args[2])
+		"cherub_alarm":
+			if cherubs.has(args[0]) and is_instance_valid(cherubs[args[0]]):
+				cherubs[args[0]].alarmed = args[1]
 		"orb":
 			_spawn_orb(args[0], args[1], true)
+		"fire":
+			var f := Fire.new()
+			f.from = args[1]
+			f.to = args[2]
+			_fx_parent().add_child(f)
+			fires[args[0]] = f
+		"stomp":
+			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.2, Color(1.0, 1.0, 1.0, 0.75), Skills.STOMP_RADIUS * 1.5)
+			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.6, Color(1.0, 0.95, 0.7, 0.6), 2.0)
 		"vortex":
 			var v := Vortex.new()
 			v.caught = args[1]
@@ -1688,6 +1741,10 @@ func _update_hud(delta: float) -> void:
 
 	_hurt_time -= delta
 	hurt_rect.color.a = clampf(_hurt_time, 0.0, 0.25) * 1.4
+	if player.burning > 0.0:   # standing in demon fire: orange glow at the edges of sight
+		hurt_rect.color = Color(1.0, 0.45, 0.05, maxf(hurt_rect.color.a, 0.18 + sin(Time.get_ticks_msec() * 0.02) * 0.05))
+	else:
+		hurt_rect.color = Color(0.9, 0.05, 0.05, hurt_rect.color.a)
 
 	_hitmarker_time -= delta
 	if _hitmarker_time > 0.0:

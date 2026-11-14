@@ -3,15 +3,15 @@
 A free, non-commercial prop-hunt game: demons possess everyday objects to hide, angels hunt them down.
 Passion project, inspired by Witch It.
 
-## Status: version 0.3.3, Fly is a skill
+## Status: version 0.4.0, Hellfire
 
 One small test map, placeholder shapes for everything.
 
 - **Practice:** single player. The angel side hunts 3 test demons (they hop and taunt so you can find them); the demon side is a sandbox for possessing props.
 - **Online:** one player hosts, friends join by address. Mobification rules: caught demons are redeemed and switch to the angels. About one angel per three players.
-- **Skills:** pick 2 per side on the main menu or in the lobby. Angels: Grappling Hook, Alarm Chicken, Vacuum Orb, Holy Leap. Demons: Possess, Fly (more coming).
+- **Skills:** pick 2 per side on the main menu or in the lobby. Angels: Grappling Hook, Alarm Cherub, Vacuum Orb, Holy Leap (steer it in the air; press its key again mid-air to Cloud Stomp). Demons: Possess, Fly, Hellfire (costs Hatred; angels in the fire are slowed and their blessings burn away).
 - **Demons** can **transform** into a copy of any prop (click), or with skills **become** the real one (Possess) and **fly** (hold the key: you rise while Hatred lasts, gravity brings you down; no fall damage).
-- The Alarm Chicken is just a chicken until a demon comes close; then it squawks and shows its detection bubble. Shoot it with a blessing to send it skidding down a hallway.
+- The Alarm Cherub is just a cherub until a demon comes close; then it squawks and shows its detection bubble. Shoot it with a blessing to send it skidding down a hallway.
 - Every prop form has its own health and speed: small = fragile but quick, big = tanky but slow. Your health bar shows how much is left; the number shows real hit points for your current form.
 
 ## Playing (Windows)
@@ -38,7 +38,7 @@ Windows and Linux players can play together.
 - Friends on the same Wi-Fi use the "same house" address. That needs no setup.
 - Friends over the internet use your internet address, which needs **UDP port 7777 forwarded** on your router to your PC. Windows will also ask to allow the game through the firewall: allow it. On Linux, if you run a firewall, allow UDP port 7777 yourself.
 
-**Joining:** type the host's address, click **Join a game**. Everyone needs the same version.
+**Joining:** type the host's address, click **Join a game**. Everyone needs exactly the same version as the host; anything else is turned away with a message saying which version to get.
 
 ## Playing from the source (developers)
 
@@ -72,7 +72,7 @@ Both builds are also made automatically: publishing a release on GitHub runs [th
 
 ## How online play stays fair
 
-The host is the referee. It decides every hit (other players' throws are only visuals on their own screens), checks every movement for speed hacks and out-of-bounds tricks and snaps cheaters back, mirrors blessing stamina and Hatred (flying longer than your Hatred allows, or floating without flying, drops you to the ground), checks every skill against your loadout and cooldowns, and limits taunt spam. Each player only receives names for their own team, so an angel's game never knows who a disguised demon is.
+The host is the referee. It decides every hit (other players' throws are only visuals on their own screens), checks every movement for speed hacks and out-of-bounds tricks and snaps cheaters back, mirrors blessing stamina and Hatred (flying longer than your Hatred allows, or floating without flying, drops you to the ground), checks every skill against your loadout and cooldowns, and limits taunt spam. Only angels receive names, and only their fellow angels', so no game ever knows who a disguised demon is (not even another demon's).
 
 ## Automated tests
 

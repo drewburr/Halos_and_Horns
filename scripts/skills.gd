@@ -8,32 +8,46 @@ const SKILLS := {
 	# ---- angels ----
 	"grapple": {"team": "angel", "label": "Grappling Hook", "cooldown": 6.0,
 		"desc": "Zip to walls and roofs, or snag a demon: damages it and drags it to you."},
-	"chicken": {"team": "angel", "label": "Alarm Chicken", "cooldown": 10.0,
-		"desc": "Drop a chicken for 9 seconds. If a demon comes close it squawks and shows its detection bubble. Hit it with a blessing to send it skidding off to check further away."},
+	"cherub": {"team": "angel", "label": "Alarm Cherub", "cooldown": 10.0,
+		"desc": "Send out a cherub for 9 seconds. It hovers there tooting its little horn; if a demon comes close it blasts the horn and shows its detection bubble. Hit it with a blessing to send it flying off to check further away."},
 	"vacuum": {"team": "angel", "label": "Vacuum Orb", "cooldown": 8.0,
 		"desc": "Throw into a pile of props: sucks them in, yanks hidden demons hard, drains their Hatred and locks their skills for 2 seconds."},
 	"leap": {"team": "angel", "label": "Holy Leap", "cooldown": 8.0,
-		"desc": "A magnificent jump."},
+		"desc": "A magnificent jump you can steer in the air. Press the key again mid-air to Cloud Stomp: slam down and hurt demons where you land."},
+	# Not pickable: the second half of Holy Leap.
+	"stomp": {"team": "angel", "label": "Cloud Stomp", "cooldown": 0.0, "part_of": "leap"},
 	# ---- demons ----
 	"fly": {"team": "demon", "label": "Fly", "cooldown": 0.0, "hold": true,
 		"desc": "Hold the key to rise, spending Hatred (about 5-6 seconds from full). Let go and you fall. No fall damage."},
+	"fire": {"team": "demon", "label": "Hellfire", "cooldown": 2.0, "hatred": 35.0,
+		"desc": "Fling a fireball that leaves a patch of fire for 6 seconds. Angels caught in it are slowed and their blessings burn away. Costs Hatred, and the fireball shows where it came from."},
 	"possess": {"team": "demon", "label": "Possess", "cooldown": 1.5,
 		"desc": "Become a real prop instead of a copy (press its key while aiming at the prop). The one you leave behind slowly dissolves."},
 }
 
-const DEFAULTS := {"angel": ["grapple", "chicken"], "demon": ["possess", "fly"]}
+const DEFAULTS := {"angel": ["grapple", "cherub"], "demon": ["possess", "fly"]}
 const SLOT_KEYS := ["Q", "Right click"]
 
 # Tuning
 const GRAPPLE_RANGE := 40.0
 const GRAPPLE_SPEED := 20.0       # m/s while zipping toward the hook
 const GRAPPLE_DAMAGE := 20
-const CHICKEN_RANGE := 15.0       # how far away you can drop it
-const CHICKEN_RADIUS := 6.0       # detection radius
-const CHICKEN_LIFETIME := 9.0
-const CHICKEN_KICK_SPEED := 16.0  # how fast a blessing sends it skidding
-const CHICKEN_KICK_UP := 3.5
-const CHICKEN_FRICTION := 9.0     # m/s lost per second while sliding on the ground (~14 m per kick)
+const CHERUB_RANGE := 15.0       # how far away you can drop it
+const CHERUB_RADIUS := 6.0       # detection radius
+const CHERUB_LIFETIME := 9.0
+const CHERUB_KICK_SPEED := 16.0  # how fast a blessing sends it skidding
+const CHERUB_KICK_UP := 3.5
+const CHERUB_FRICTION := 9.0     # m/s lost per second while sliding on the ground (~14 m per kick)
+const LEAP_PUSH := 7.0            # sideways speed in the direction you're holding when you leap
+const LEAP_AIR_ACCEL := 40.0      # steering while leaping (normal air steering is much weaker)
+const STOMP_SPEED := 30.0
+const STOMP_RADIUS := 4.0
+const STOMP_DAMAGE := 15
+const FIRE_RANGE := 15.0
+const FIRE_RADIUS := 1.8
+const FIRE_LIFETIME := 6.0
+const FIRE_SLOW := 0.6            # angels in fire move at 60% speed
+const FIRE_BLESSING_BURN := 45.0  # blessing stamina burned per second while standing in fire
 const VACUUM_RADIUS := 6.0
 const VACUUM_TIME := 2.5
 const VACUUM_HATRED_DRAIN := 35.0
@@ -48,6 +62,10 @@ static func label(id: String) -> String:
 	return SKILLS[id]["label"] if SKILLS.has(id) else "-"
 
 
+static func hatred_cost(id: String) -> float:
+	return SKILLS[id].get("hatred", 0.0) if SKILLS.has(id) else 0.0
+
+
 static func cooldown(id: String) -> float:
 	return SKILLS[id]["cooldown"] if SKILLS.has(id) else 0.0
 
@@ -55,7 +73,7 @@ static func cooldown(id: String) -> float:
 static func for_team(team: String) -> Array:
 	var ids := []
 	for id in SKILLS:
-		if SKILLS[id]["team"] == team:
+		if SKILLS[id]["team"] == team and not SKILLS[id].has("part_of"):
 			ids.append(id)
 	return ids
 
@@ -67,6 +85,9 @@ static func clean_loadout(team: String, wanted) -> Array:
 		return DEFAULTS[team].duplicate()
 	for i in mini(2, wanted.size()):
 		var id = wanted[i]
-		if typeof(id) == TYPE_STRING and SKILLS.has(id) and SKILLS[id]["team"] == team and not id in out:
+		if id == "chicken":
+			id = "cherub"   # renamed in 0.4
+		if typeof(id) == TYPE_STRING and SKILLS.has(id) and SKILLS[id]["team"] == team \
+				and not SKILLS[id].has("part_of") and not id in out:
 			out[i] = id
 	return out
