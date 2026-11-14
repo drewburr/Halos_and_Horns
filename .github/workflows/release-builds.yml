@@ -38,6 +38,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The release tag is the game's version: v0.4.1 becomes "0.4.1" in the
+      # menu, in the join check and in the in-game updater. Nothing in the
+      # source needs changing for a release.
+      - name: Stamp the release tag as the game's version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+){1,2}$ ]]; then
+            echo "::error::Release tag '$TAG' must look like v0.4.1"
+            exit 1
+          fi
+          sed -i "s|^config/version=.*|config/version=\"${TAG#v}\"|" project.godot
+          grep -x "config/version=\"${TAG#v}\"" project.godot
+
       - name: Download Godot and the ${{ matrix.preset }} export template
         run: |
           base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"

@@ -6,6 +6,8 @@ config_version=5
 [application]
 
 config/name="Halos & Horns"
+; The release build replaces this with the release tag (v0.4.1 -> 0.4.1). Leave it as "dev" here.
+config/version="dev"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.3", "Forward Plus")
 

@@ -19,8 +19,9 @@ const Fire = preload("res://scripts/fire.gd")
 const Vortex = preload("res://scripts/vortex.gd")
 const Rope = preload("res://scripts/rope.gd")
 const Projectile = preload("res://scripts/projectile.gd")
+const Updater = preload("res://scripts/updater.gd")
 
-const GAME_VERSION := "0.4.0 (Hellfire)"
+const GAME_CODENAME := "Hellfire"
 const HIDE_TIME := 30.0
 const HUNT_TIME := 180.0
 const HIDE_CHOICES := [15.0, 30.0, 45.0, 60.0, 90.0]
@@ -57,6 +58,13 @@ var hold_bar: ColorRect          # "returning to demon form" progress, under the
 var hold_fill: ColorRect
 var player: Player
 var net: Node = null
+# The version is the GitHub release tag, stamped into the build by release-builds.yml.
+# Run from source, or built by hand, it's "dev".
+var game_version: String = ProjectSettings.get_setting("application/config/version", "dev")
+var game_build := 0          # the same version as one number (0.4.1 -> 401); only equal builds can play together
+var updater: Updater          # checks GitHub for a newer version (see updater.gd)
+var update_button: Button
+var update_note: Label
 var autobot: Node = null
 var round_root: Node3D
 var rng := RandomNumberGenerator.new()
@@ -116,6 +124,10 @@ const TUNING_SLIDERS := [
 
 
 func _ready() -> void:
+	var numbers := Updater.version_numbers(game_version)
+	while numbers.size() < 3:   # "dev" has no numbers and "0.4" has two: the rest count as 0
+		numbers.append(0)
+	game_build = numbers[0] * 10000 + numbers[1] * 100 + numbers[2]
 	rng.randomize()
 	_setup_input()
 	_build_environment()
@@ -141,6 +153,10 @@ func _ready() -> void:
 	_load_settings()
 	_show_menu("")
 	_handle_command_line()
+	updater = Updater.new()
+	add_child(updater)
+	updater.changed.connect(_refresh_update_row)
+	updater.check(game_version)
 
 
 # ---------- input ----------
@@ -420,9 +436,17 @@ func _build_menu() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var version := Label.new()
-	version.text = "version " + GAME_VERSION
+	version.text = "version %s (%s)" % [game_version, GAME_CODENAME]
 	version.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(version)
+	# Hidden unless a newer version is out (see _refresh_update_row).
+	update_button = _button(box, "", func(): updater.install())
+	update_button.visible = false
+	update_note = Label.new()
+	update_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	update_note.add_theme_color_override("font_color", Color(1.0, 0.7, 0.5))
+	update_note.visible = false
+	box.add_child(update_note)
 	name_edit = _field(box, "Your name", "Name")
 	_build_loadout(box)
 	_button(box, "Practice (single player)", start_practice)
@@ -437,6 +461,14 @@ func _build_menu() -> void:
 	menu_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	menu_status.add_theme_color_override("font_color", Color(1.0, 0.7, 0.5))
 	box.add_child(menu_status)
+
+
+func _refresh_update_row() -> void:
+	update_button.text = updater.button_text
+	update_button.visible = updater.state != "idle"
+	update_button.disabled = updater.state in ["downloading", "restarting"]
+	update_note.text = updater.note
+	update_note.visible = updater.note != ""
 
 
 func _build_pause_menu() -> void:
