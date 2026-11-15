@@ -992,8 +992,12 @@ func minion_spawned(owner: int, point: Vector3) -> void:
 	if minions.has(owner):
 		_minion_gone(owner, true)
 	var rec: Dictionary = peers[owner]
+	if point.distance_to(rec["pos"]) > Skills.MINION_RANGE + 5.0 or not _in_bounds(point):
+		if owner != 1:
+			s_minion_gone.rpc_id(owner)   # too far away: no minion
+		return
 	var m := {"eid": _new_eid(), "pos": main.ground_below(point + Vector3.UP), "yaw": rec["yaw"],
-		"form": rec["form"], "hp": PropLib.max_hp(rec["form"]), "until": now() + Skills.MINION_LIFETIME, "last_time": now()}
+		"form": rec["form"], "hp": PropLib.max_hp(rec["form"]) * Skills.MINION_HEALTH, "until": now() + Skills.MINION_LIFETIME, "last_time": now()}
 	minions[owner] = m
 	if owner != 1:
 		var r := _get_or_make_remote(m["eid"])

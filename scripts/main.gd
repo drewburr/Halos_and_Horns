@@ -1327,7 +1327,7 @@ func _spawn_my_minion(at: Vector3) -> void:
 	player.minion = m
 	if mode == "practice":
 		# Practice: hits come straight here; it has the health of the form it copies.
-		var hp := [PropLib.max_hp(m.form)]
+		var hp := [PropLib.max_hp(m.form) * Skills.MINION_HEALTH]
 		m.on_hit = func(_by, damage):
 			hp[0] -= damage
 			if hp[0] <= 0 and is_instance_valid(m):

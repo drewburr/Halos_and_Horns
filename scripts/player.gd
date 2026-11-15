@@ -567,9 +567,10 @@ func use_skill(slot: int) -> bool:
 		"minion":
 			if is_instance_valid(minion):
 				return false            # one at a time; holding the key steers it
+			# It appears wherever you're aiming (up to 30 m away), no puff, no sound.
+			var spot := _aim_ray(Skills.MINION_RANGE)
+			point = spot["position"] - dir * 0.3 if not spot.is_empty() else origin + dir * Skills.MINION_RANGE
 			hatred -= Skills.hatred_cost(id)
-			var side := global_transform.basis.x
-			point = global_position + Vector3(side.x, 0.0, side.z).normalized() * 1.3
 		"possess":
 			if not is_instance_valid(_hover_prop) or not _hover_prop.has_meta("prop_index"):
 				return false
@@ -712,11 +713,14 @@ func _apply_outline(node: Node, material: Material) -> void:
 
 
 # Ray straight out of the camera (the crosshair), ignoring ourselves.
-func _aim_ray(reach: float) -> Dictionary:
+func _aim_ray(reach: float, also_skip: Array = []) -> Dictionary:
 	var from := camera.global_position
 	var to := from - camera.global_transform.basis.z * reach
 	var query := PhysicsRayQueryParameters3D.create(from, to, 1)   # world only, not the invisible map bounds
-	query.exclude = [get_rid()]
+	var skip := [get_rid()]
+	for n in also_skip:
+		skip.append(n.get_rid())
+	query.exclude = skip
 	return get_world_3d().direct_space_state.intersect_ray(query)
 
 
@@ -848,7 +852,7 @@ func _steer_minion() -> void:
 		return
 	var held: bool = _hold_key_down("minion") if test_input.is_empty() else test_input.get("minion", false)
 	if held and not frozen:
-		var hit := _aim_ray(80.0)
+		var hit := _aim_ray(80.0, [minion])   # (looking right at it still steers past it)
 		if not hit.is_empty():
 			minion.steering = true
 			minion.walk_to(hit["position"])
