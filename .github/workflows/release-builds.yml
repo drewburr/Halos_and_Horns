@@ -14,7 +14,13 @@ on:
 
 env:
   # Must match the Godot version the project is made with (see project.godot).
-  GODOT_VERSION: "4.3"
+  GODOT_VERSION: "4.7.2"
+  # The official SHA-512 fingerprints of the two Godot downloads (from that
+  # release's SHA512-SUMS.txt), written down here on purpose: they're checked
+  # against what gets downloaded, so a tampered download can't bring along its
+  # own matching fingerprint. Update both when GODOT_VERSION changes.
+  GODOT_SHA512: "9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65"
+  TEMPLATES_SHA512: "ca4d71c4d7b81dfc15d1a98baa07534aa95b03fdda78a0075b06672e1648d2e5f40980c9adc28d23e1b92e732ee7bf3461997aa804af74ec2fcd7a93ccb84079"
 
 jobs:
   build:
@@ -36,10 +42,13 @@ jobs:
             template: linux_release.x86_64
             file: HalosAndHorns.x86_64
     steps:
-      - uses: actions/checkout@v4
+      # Third-party steps are pinned to an exact commit (not a tag that could be moved).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # The release tag is the game's version: v0.4.1 becomes "0.4.1" in the
-      # menu, in the join check and in the in-game updater. Nothing in the
+      # menu, in the join check and in the new-version notice. Nothing in the
       # source needs changing for a release.
       - name: Stamp the release tag as the game's version
         if: github.event_name == 'release'
@@ -58,6 +67,8 @@ jobs:
           base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
           curl -fsSL -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
           curl -fsSL -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          echo "$GODOT_SHA512  godot.zip" | sha512sum -c -
+          echo "$TEMPLATES_SHA512  templates.tpz" | sha512sum -c -
           unzip -q godot.zip -d "$RUNNER_TEMP"
           templates="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
           mkdir -p "$templates"
@@ -76,7 +87,7 @@ jobs:
         if: matrix.preset == 'Linux'
         run: timeout 60 "builds/${{ matrix.file }}" --headless --quit-after 10
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: HalosAndHorns-${{ matrix.preset }}
           path: builds/${{ matrix.file }}
