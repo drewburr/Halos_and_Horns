@@ -346,6 +346,27 @@ func _run() -> void:
 	main._save_settings()
 	check(KB.current("melee") == melee_was, "reset to defaults")
 
+	# Maps are plain data, and anything odd in a map file is cleaned out.
+	var MD = load("res://scripts/map_data.gd")
+	var arena: Dictionary = MD.load_file("res://tests/test_map.json")
+	check(arena.get("name") == "Test Arena", "a map file loads")
+	check(not arena["pieces"].any(func(p): return p["type"] == "rocket_launcher"), "...unknown pieces are dropped")
+	var huge: Array = arena["pieces"].filter(func(p): return p["type"] == "block" and absf(p["pos"][0]) > 400)
+	check(huge.size() == 1 and huge[0]["size"][0] >= 0.05, "...wild numbers are clamped")
+	check(MD.from_text("this is not a map").is_empty() and MD.from_text("[1, 2, 3]").is_empty(), "...garbage isn't a map")
+	check(MD.fingerprint(arena) == MD.fingerprint(MD.from_text(MD.to_text(arena))), "...saving and loading gives the same map")
+	main.load_map(arena, "res://tests/test_map.json")
+	main.start_practice()
+	await frames(10)
+	var placed: Array = main.props.filter(func(p): return is_instance_valid(p) and p.get_meta("prop_type") in ["barrel", "pickle"] and p.global_position.distance_to(Vector3(6, 0, -6)) < 0.1)
+	check(placed.size() == 1, "...props placed by hand are there")
+	check(main.props.size() == 2 + 12, "...plus the map's random props (%d)" % main.props.size())
+	check(main.MAP_HALF == 16.0 and main.shrine == null and not main.near_shrine(Vector3.ZERO), "...its size, and no shrine if it has none")
+	main.load_map(MD.load_file(MD.BUILT_IN[0]), MD.BUILT_IN[0])
+	main.start_practice()
+	await frames(10)
+	check(main.shrine != null and main.props.size() == 45, "back to the Playground")
+
 	# Banned names (spacing, l33t, look-alike letters...) are refused; normal names aren't.
 	var N = load("res://scripts/net_game.gd")
 	var blocked := true

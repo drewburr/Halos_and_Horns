@@ -1,0 +1,108 @@
+{
+ "format": 1,
+ "name": "Test Arena",
+ "author": "tests",
+ "size": 16,
+ "ceiling": 12,
+ "random_props": 12,
+ "ground_color": "#4a6b8a",
+ "wall_color": "#333344",
+ "pieces": [
+  {
+   "type": "block",
+   "pos": [
+    4,
+    1,
+    4
+   ],
+   "size": [
+    3,
+    2,
+    3
+   ],
+   "color": "#aa5544"
+  },
+  {
+   "type": "cylinder",
+   "pos": [
+    -4,
+    1.5,
+    -4
+   ],
+   "size": [
+    2,
+    3,
+    2
+   ],
+   "color": "#44aa55"
+  },
+  {
+   "type": "prop",
+   "prop": "barrel",
+   "pos": [
+    6,
+    0,
+    -6
+   ],
+   "rot": [
+    0,
+    45,
+    0
+   ]
+  },
+  {
+   "type": "prop",
+   "prop": "pickle",
+   "pos": [
+    -6,
+    0,
+    6
+   ]
+  },
+  {
+   "type": "bouncy",
+   "pos": [
+    0,
+    0,
+    8
+   ]
+  },
+  {
+   "type": "angel_spawn",
+   "pos": [
+    0,
+    0.1,
+    -13
+   ]
+  },
+  {
+   "type": "demon_spawn",
+   "pos": [
+    0,
+    0.1,
+    2
+   ]
+  },
+  {
+   "type": "rocket_launcher",
+   "pos": [
+    0,
+    0,
+    0
+   ]
+  },
+  {
+   "type": "block",
+   "pos": [
+    1000000000.0,
+    0,
+    "x"
+   ],
+   "size": [
+    -5,
+    0,
+    1
+   ]
+  }
+ ]
+}

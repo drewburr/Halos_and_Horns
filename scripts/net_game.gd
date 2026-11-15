@@ -17,6 +17,7 @@ const PropLib = preload("res://scripts/prop_library.gd")
 const Effects = preload("res://scripts/effects.gd")
 const Skills = preload("res://scripts/skills.gd")
 const PowerUps = preload("res://scripts/powerups.gd")
+const MapData = preload("res://scripts/map_data.gd")
 
 const PROTOCOL_VERSION := 5      # (old) kept for reference; joining now checks main.game_build
 # Only the exact same build can join. The build number comes from the release tag
@@ -215,6 +216,7 @@ func c_hello(player_name: String, version: int, angel_skills: Array, demon_skill
 	peers[id]["loadout"] = {"angel": Skills.clean_loadout("angel", angel_skills),
 			"demon": Skills.clean_loadout("demon", demon_skills)}
 	print("[host] %s joined" % peers[id]["name"])
+	send_map(id)
 	_broadcast_lobby()
 	if phase == "hiding" or phase == "hunting":
 		_add_late_joiner(id)
@@ -402,12 +404,45 @@ func _roster_for(viewer_id: int) -> Array:
 
 func _send_round_start(id: int) -> void:
 	var rec: Dictionary = peers[id]
+	send_map(id)   # (the map goes first: same channel, so it always arrives before the round)
 	if id == 1:
 		my_eid = rec["eid"]
 		main.online_round_start(round_seed, rec["role"], rec["pos"], phase, phase_time)
 		_apply_roster(_roster_for(1))
 	else:
 		s_round_start.rpc_id(id, round_seed, rec["role"], rec["pos"], phase, phase_time, rec["eid"], _roster_for(id))
+
+
+# ---------------- the map ----------------
+# The host's map is sent to everyone as plain map data; each joiner checks and
+# builds it (it can't contain anything but pieces). Sent when they join, when the
+# host picks another map, and before every round, unless they already have it.
+
+func send_map(id: int) -> void:
+	if id == 1 or not peers.has(id):
+		return
+	var print_now: String = MapData.fingerprint(main.map_data)
+	if peers[id].get("has_map", "") == print_now:
+		return
+	peers[id]["has_map"] = print_now
+	s_map.rpc_id(id, MapData.to_text(main.map_data))
+
+
+func send_map_to_all() -> void:
+	for id in _client_ids():
+		send_map(id)
+	_broadcast_lobby()
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_map(text: String) -> void:
+	var m := MapData.from_text(text)
+	if m.is_empty():
+		push_warning("The host's map couldn't be read.")
+		return
+	if MapData.fingerprint(m) != MapData.fingerprint(main.map_data):
+		main.load_map(m)
+	print("[net] map: %s" % m["name"])
 
 
 func _send_rosters() -> void:

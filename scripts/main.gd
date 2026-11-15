@@ -108,6 +108,8 @@ var chat_edit: LineEdit
 var chat_team_only := false
 var _chat_lines := []           # [Label, seconds left on screen]
 var lobby_times: VBoxContainer   # host's round-length pickers
+var lobby_map_label: Label
+var _map_pick: OptionButton      # host: which map
 var _kick_pick: OptionButton     # host: who to kick
 var _time_pick := {}            # picker label -> chosen index
 var heat_rect: ColorRect         # Hellfire screen distortion
@@ -570,6 +572,16 @@ func _add_block(center: Vector3, size: Vector3, color: Color, rot := Vector3.ZER
 	return body
 
 
+# Host lobby: built-in maps and the player's own, with the current one selected.
+func refresh_map_list() -> void:
+	_map_pick.clear()
+	for entry in MapData.list_maps():
+		_map_pick.add_item(entry["name"] + ("" if entry["built_in"] else "  (yours)"))
+		_map_pick.set_item_metadata(_map_pick.item_count - 1, entry["path"])
+		if entry["path"] == map_path:
+			_map_pick.select(_map_pick.item_count - 1)
+
+
 # Use a map: remember its layout and build it.
 func load_map(map: Dictionary, path := "") -> void:
 	map_data = MapData.clean(map)
@@ -997,8 +1009,27 @@ func _build_lobby() -> void:
 	box.add_child(lobby_info)
 	_build_loadout(box)
 	# Host only: how long the hiding and hunting phases last.
+	lobby_map_label = Label.new()
+	box.add_child(lobby_map_label)
 	lobby_times = VBoxContainer.new()
 	box.add_child(lobby_times)
+	# Host: which map to play.
+	var map_row := HBoxContainer.new()
+	var map_lbl := Label.new()
+	map_lbl.text = "Map"
+	map_lbl.custom_minimum_size.x = 140
+	map_row.add_child(map_lbl)
+	_map_pick = OptionButton.new()
+	_map_pick.custom_minimum_size.x = 260
+	_map_pick.item_selected.connect(func(i):
+		var path: String = _map_pick.get_item_metadata(i)
+		var m := MapData.load_file(path)
+		if not m.is_empty():
+			load_map(m, path)
+			if net and net.is_host:
+				net.send_map_to_all())
+	map_row.add_child(_map_pick)
+	lobby_times.add_child(map_row)
 	_time_choice(lobby_times, "Hiding time", HIDE_CHOICES, 1)
 	_time_choice(lobby_times, "Hunting time", HUNT_CHOICES, 2)
 	_time_choice(lobby_times, "Kick idle players", IDLE_CHOICES, 0, func(i): if net: net.idle_limit = IDLE_CHOICES[i])
@@ -1372,7 +1403,10 @@ func online_lobby(names: Array, host_phase: String) -> void:
 	if state != State.LOBBY:
 		return   # mid-round: the list updates, the panel stays hidden
 	lobby_players.text = "Players (%d):\n  %s" % [names.size(), "\n  ".join(_lobby_lines(names))]
+	lobby_map_label.text = "Map: %s" % map_data.get("name", "?") + ((" by " + map_data["author"]) if map_data.get("author", "") != "" else "")
 	var is_host: bool = net != null and net.is_host
+	if is_host and _map_pick.item_count == 0:
+		refresh_map_list()
 	lobby_start.visible = is_host
 	lobby_times.visible = is_host
 	if is_host:
@@ -2269,6 +2303,10 @@ func _handle_command_line() -> void:
 			net.hunt_time = float(args["hunt"])
 		if net and args.has("idle"):
 			net.idle_limit = float(args["idle"])
+		if args.has("map"):   # e.g. --map=res://tests/test_map.json
+			var m := MapData.load_file(args["map"])
+			if not m.is_empty():
+				load_map(m, args["map"])
 		if net and args.has("roles"):   # e.g. --roles=Theo:demon,Wife:angel
 			for pair in args["roles"].split(","):
 				var kv: PackedStringArray = pair.split(":")
