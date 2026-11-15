@@ -89,6 +89,9 @@ fi
 if grep -q 'used minion' "$OUT/Brother.log"; then
 	check "a demon sent out a minion and the host showed it to everyone" "grep -q 'Brother sent out a minion' '$OUT/host.log'"
 fi
+if grep -qE '(Wife|Brother|Squirrel|Oddy) sat still too long' "$OUT/host.log"; then
+	check "...and that player's game was told" "grep -q 'forced to taunt' '$OUT/Wife.log' '$OUT/Brother.log' '$OUT/Squirrel.log' '$OUT/Oddy.log'"
+fi
 if grep -q 'BOT Theo: used fear' "$OUT/host.log"; then
 	check "Fear: the host scattered the angels near the demon" "grep -qE 'fear: [1-9] angel' '$OUT/host.log'"
 	check "...and a scared angel was told" "grep -q 'scared!' '$OUT/Wife.log' '$OUT/Squirrel.log' '$OUT/Brother.log' '$OUT/Oddy.log'"

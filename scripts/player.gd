@@ -996,6 +996,15 @@ func taunt(signature: bool) -> bool:
 	return true
 
 
+# The host made us taunt (we sat still too long as a demon). The host tells everyone else.
+func forced_taunt(taunt_name: String) -> void:
+	last_taunt = taunt_name
+	voice.stream = Taunts.stream(taunt_name)
+	voice.pitch_scale = randf_range(0.96, 1.04)
+	voice.play()
+	_taunt_cooldown = TAUNT_COOLDOWN
+
+
 # Throw if the cooldown is done and there's enough blessing stamina.
 var throw_seq := 0               # numbers our throws so the host can match up hit claims
 var on_claim: Callable           # set by the network code for joined players

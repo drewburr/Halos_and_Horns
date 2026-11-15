@@ -220,7 +220,12 @@ func _client_ids() -> Array:
 
 # ---------------- kicking ----------------
 
-var idle_limit := 0.0   # seconds without moving or looking around before the host kicks you (0 = never)
+var idle_limit := 0.0   # seconds an ANGEL can go without moving or looking around before the host kicks them (0 = never)
+# Demons are never kicked for sitting still (hiding is the whole point), but a demon
+# that hasn't moved for this long during the hunt taunts, whether it likes it or not,
+# and again every time this long passes. Taunting by choice resets the clock.
+const STILL_TAUNT_AFTER := 20.0
+const STILL_WARNING := 5.0     # (heads-up this long before)
 
 
 func kick_by_name(player_name: String, reason: String) -> void:
@@ -256,9 +261,67 @@ func _check_idle() -> void:
 	var t := now()
 	for id in _client_ids():
 		var rec: Dictionary = peers[id]
+		if rec["role"] == "demon":
+			rec["active_at"] = t   # demons can sit still as long as they like (see below)
+			continue
 		if rec["in_round"] and t - rec.get("active_at", t) > idle_limit:
 			rec["active_at"] = t
 			kick(id, "You were kicked for being idle (no moving or looking around for a while).")
+
+
+# Demons who haven't moved for a while taunt anyway.
+func _check_still_demons() -> void:
+	var t := now()
+	for id in peers:
+		var rec: Dictionary = peers[id]
+		if phase != "hunting" or not rec["in_round"] or rec["role"] != "demon":
+			rec.erase("still_pos")
+			continue
+		var pos: Vector3 = rec["pos"]
+		if not rec.has("still_pos") or pos.distance_to(rec["still_pos"]) > 0.5:
+			rec["still_pos"] = pos
+			rec["still_since"] = t
+			rec["still_warned"] = false
+			continue
+		var since: float = maxf(rec["still_since"], rec["last_taunt"])
+		if t - since >= STILL_TAUNT_AFTER:
+			force_taunt(id)
+		elif t - since >= STILL_TAUNT_AFTER - STILL_WARNING and not rec["still_warned"]:
+			rec["still_warned"] = true
+			if id == 1:
+				main.still_warning(STILL_WARNING)
+			else:
+				s_still_warning.rpc_id(id, STILL_WARNING)
+
+
+func force_taunt(id: int) -> void:
+	var rec: Dictionary = peers[id]
+	var taunt_name: String = Taunts.pick_random(rec["role"], rec.get("forced_taunt", ""))
+	rec["forced_taunt"] = taunt_name
+	rec["last_taunt"] = now()
+	rec["still_warned"] = false
+	print("[host] %s sat still too long: forced taunt" % rec["name"])
+	if id == 1:
+		main.forced_taunt(taunt_name)
+	else:
+		s_forced_taunt.rpc_id(id, taunt_name)
+		if remotes.has(rec["eid"]):
+			remotes[rec["eid"]].play_taunt(taunt_name)
+	for other in _client_ids():
+		if other != id:
+			s_taunt.rpc_id(other, rec["eid"] if id != 1 else my_eid, taunt_name)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_still_warning(seconds: float) -> void:
+	main.still_warning(clampf(seconds, 0.0, 10.0))
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_forced_taunt(taunt_name: String) -> void:
+	if _valid_taunt("demon", taunt_name):
+		print("[net] forced to taunt")
+		main.forced_taunt(taunt_name)
 
 
 func _broadcast_lobby() -> void:
@@ -558,6 +621,7 @@ func _host_tick(delta: float) -> void:
 		me["yaw"] = main.player.shown_yaw()
 		me["form"] = main.player.possessed_type
 		_record_history(1, me["pos"])
+	_check_still_demons()
 	if minions.has(1) and is_instance_valid(main.player.minion):
 		minions[1]["pos"] = main.player.minion.global_position
 		minions[1]["yaw"] = main.player.minion.rotation.y
@@ -1215,6 +1279,7 @@ func on_local_taunt(taunt_name: String) -> void:
 	if not main.in_online_round():
 		return
 	if is_host:
+		peers[1]["last_taunt"] = now()
 		_taunt_bonus(1)
 		for id in _client_ids():
 			s_taunt.rpc_id(id, my_eid, taunt_name)

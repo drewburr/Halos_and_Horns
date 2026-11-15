@@ -21,6 +21,7 @@ One small test map (the Playground), placeholder shapes for everything, and Crea
 - **Ledge grab:** angels in the air who push into a wall whose top they could reach pull themselves up onto it.
 - **Controls screen:** every action can be rebound to any key or mouse button (main menu or Esc menu).
 - **The shrine:** one per map (the stone dais with the floating half-gold, half-red crystal and a SHRINE sign), the only place to swap skills mid-round. Press G there; a swap takes 3 seconds in total, you can't move while at it, demons have to leave their prop first, and the shrine flares up so everyone knows someone is there. Fresh skills start on cooldown.
+- **No hiding forever in silence:** demons can sit still as long as they like (they never get kicked for it), but a demon that hasn't moved for 20 seconds during the hunt taunts automatically, and again every 20 seconds after that. You get a 5-second warning first, and taunting on your own resets the clock.
 - **Chat:** Enter talks to everyone, Backspace to your team only. Everyone is told who redeemed whom, and who the last demon standing is.
 - Every prop form has its own health and speed: small = fragile but quick, big = tanky but slow. Your health bar shows how much is left; the number shows real hit points for your current form.
 
@@ -50,7 +51,7 @@ Making a release (developers): publish a GitHub release tagged like `v0.4.1`. Th
 
 ## Hosting and joining
 
-**Hosting:** click **Host a game**. The lobby shows the addresses friends should use. Pick the hiding and hunting times (and, if you like, a time after which idle players get kicked; you can also kick someone by hand), then click **Start round** once at least 2 players are in.
+**Hosting:** click **Host a game**. The lobby shows the addresses friends should use. Pick the hiding and hunting times (and, if you like, a time after which idle angels get kicked; you can also kick someone by hand), then click **Start round** once at least 2 players are in.
 - Friends on the same Wi-Fi use the "same house" address. That needs no setup.
 - Friends over the internet use your internet address, which needs **UDP port 7777 forwarded** on your router to your PC. Windows will also ask to allow the game through the firewall: allow it. On Linux, if you run a firewall, allow UDP port 7777 yourself.
 

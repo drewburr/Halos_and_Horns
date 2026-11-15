@@ -102,6 +102,9 @@ func _physics_process(delta: float) -> void:
 		for row in main.scoreboard_rows:
 			roster.append("%s(%s,%dms,%s)" % [row[0], row[1], row[2], "+".join(row[3])])
 		log_line("roster: %s | my ping %d" % [" ".join(roster), main.net.my_ping()])
+	if options.has("still"):   # --still: do nothing at all (no moving, no taunting)
+		p.test_input = {}
+		return
 	_taunt_timer -= delta
 	if _taunt_timer <= 0.0:
 		_taunt_timer = randf_range(6.0, 10.0)

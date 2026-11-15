@@ -62,7 +62,7 @@ void fragment() {
 }
 """
 const HIDE_CHOICES := [15.0, 30.0, 45.0, 60.0, 90.0]
-const IDLE_CHOICES := [0.0, 120.0, 300.0, 600.0]   # kick players who haven't moved or looked around for this long (0 = never)
+const IDLE_CHOICES := [0.0, 120.0, 300.0, 600.0]   # kick angels who haven't moved or looked around for this long (0 = never; demons are never kicked)
 const HUNT_CHOICES := [120.0, 180.0, 300.0, 600.0, 900.0, 1800.0]
 const BOT_COUNT := 3
 var PROP_COUNT := 45            # random props each round (from the map)
@@ -1047,7 +1047,7 @@ func _build_lobby() -> void:
 	lobby_times.add_child(map_row)
 	_time_choice(lobby_times, "Hiding time", HIDE_CHOICES, 1)
 	_time_choice(lobby_times, "Hunting time", HUNT_CHOICES, 2)
-	_time_choice(lobby_times, "Kick idle players", IDLE_CHOICES, 0, func(i): if net: net.idle_limit = IDLE_CHOICES[i])
+	_time_choice(lobby_times, "Kick idle angels", IDLE_CHOICES, 0, func(i): if net: net.idle_limit = IDLE_CHOICES[i])
 	var kick_row := HBoxContainer.new()
 	lobby_times.add_child(kick_row)
 	_kick_pick = OptionButton.new()
@@ -2828,6 +2828,16 @@ func _on_taunted(taunt_name: String) -> void:
 	_taunt_label_time = 1.5
 	if net:
 		net.on_local_taunt(taunt_name)
+
+
+# Demons who sit still too long during the hunt taunt anyway (the host decides when).
+func still_warning(seconds: float) -> void:
+	_toast("Holding very still... move within %d s or you'll taunt!" % int(seconds), seconds)
+
+
+func forced_taunt(taunt_name: String) -> void:
+	player.forced_taunt(taunt_name)
+	_toast("You sat still too long, so you taunted!", 2.5)
 
 
 func _toast(text: String, seconds: float) -> void:
