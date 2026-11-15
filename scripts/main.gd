@@ -21,9 +21,15 @@ const PowerUps = preload("res://scripts/powerups.gd")
 const Keybinds = preload("res://scripts/keybinds.gd")
 const Bouncy = preload("res://scripts/bouncy.gd")
 const Shrine = preload("res://scripts/shrine.gd")
-const SHRINE_POS := Vector3(-20, 0, 4)   # the one shrine on this map
-const BOUNCIES := [Vector3(8, 0, 3.4), Vector3(14, 0, -9.6), Vector3(-10, 0, -2.2)]   # by the hut, the tower, the long house
-const ONE_USE_BOUNCIES := [Vector3(0, 0, -14), Vector3(-18, 0, 15), Vector3(21, 0, 2)]
+const MapData = preload("res://scripts/map_data.gd")
+# The current map's layout (filled in by load_map from the map file).
+var map_data := {}
+var map_path := ""
+var world_root: Node3D           # everything the map file built (rebuilt when the map changes)
+var SHRINE_POS := Vector3(0, -1000, 0)   # the map's one shrine (far away if it has none)
+var BOUNCIES := []               # permanent bouncy spots
+var ONE_USE_BOUNCIES := []       # one-use bouncy spots (they come back each round)
+var PLACED_PROPS := []           # [type, position, rotation] of props placed by hand
 const Vortex = preload("res://scripts/vortex.gd")
 const Projectile = preload("res://scripts/projectile.gd")
 const Updater = preload("res://scripts/updater.gd")
@@ -55,10 +61,10 @@ const HIDE_CHOICES := [15.0, 30.0, 45.0, 60.0, 90.0]
 const IDLE_CHOICES := [0.0, 120.0, 300.0, 600.0]   # kick players who haven't moved or looked around for this long (0 = never)
 const HUNT_CHOICES := [120.0, 180.0, 300.0, 600.0, 900.0, 1800.0]
 const BOT_COUNT := 3
-const PROP_COUNT := 45
-const MAP_HALF := 28.0
-const ANGEL_SPAWN := Vector3(0, 0.1, -24)
-const DEMON_SPAWN := Vector3(0, 0.1, 0)
+var PROP_COUNT := 45            # random props each round (from the map)
+var MAP_HALF := 28.0
+var ANGEL_SPAWN := Vector3(0, 0.1, -24)
+var DEMON_SPAWN := Vector3(0, 0.1, 0)
 const SETTINGS_PATH := "user://settings.cfg"
 
 enum State { LOBBY, HIDING, HUNTING, ENDED }
@@ -189,7 +195,7 @@ func _ready() -> void:
 	rng.randomize()
 	_setup_input()
 	_build_environment()
-	_build_map()
+	load_map(MapData.load_file(MapData.BUILT_IN[0]), MapData.BUILT_IN[0])
 	_build_hud()
 	_build_sounds()
 	player = Player.new()
@@ -359,7 +365,8 @@ func _try_open_shrine() -> void:
 	player.velocity = Vector3.ZERO
 	_refresh_mouse()
 	if mode == "practice":
-		shrine.flare()
+		if shrine:
+			shrine.flare()
 	elif net:
 		net.shrine_open()
 
@@ -530,74 +537,122 @@ func _build_environment() -> void:
 	add_child(sun)
 
 
-func _add_block(center: Vector3, size: Vector3, color: Color, rot := Vector3.ZERO, keep_clear := true) -> void:
+func _add_block(center: Vector3, size: Vector3, color: Color, rot := Vector3.ZERO, keep_clear := true, cylinder := false) -> StaticBody3D:
 	var body := StaticBody3D.new()
 	var shape_node := CollisionShape3D.new()
-	var box := BoxShape3D.new()
-	box.size = size
-	shape_node.shape = box
-	body.add_child(shape_node)
 	var mi := MeshInstance3D.new()
-	var mesh := BoxMesh.new()
-	mesh.size = size
-	mi.mesh = mesh
+	if cylinder:
+		# size.x = width, size.y = height (the z size is ignored: it's round)
+		var cs := CylinderShape3D.new()
+		cs.radius = size.x / 2.0
+		cs.height = size.y
+		shape_node.shape = cs
+		var cm := CylinderMesh.new()
+		cm.top_radius = size.x / 2.0
+		cm.bottom_radius = size.x / 2.0
+		cm.height = size.y
+		mi.mesh = cm
+	else:
+		var box := BoxShape3D.new()
+		box.size = size
+		shape_node.shape = box
+		var mesh := BoxMesh.new()
+		mesh.size = size
+		mi.mesh = mesh
+	body.add_child(shape_node)
 	mi.material_override = PropLib.mat(color)
 	body.add_child(mi)
 	body.position = center
 	body.rotation = rot
-	add_child(body)
+	world_root.add_child(body)
 	if keep_clear:
 		structures.append([Vector2(center.x, center.z), maxf(size.x, size.z) / 2.0 + 1.0])
+	return body
+
+
+# Use a map: remember its layout and build it.
+func load_map(map: Dictionary, path := "") -> void:
+	map_data = MapData.clean(map)
+	map_path = path
+	MAP_HALF = map_data["size"]
+	CEILING = map_data["ceiling"]
+	PROP_COUNT = map_data["random_props"]
+	SHRINE_POS = Vector3(0, -1000, 0)
+	BOUNCIES = []
+	ONE_USE_BOUNCIES = []
+	PLACED_PROPS = []
+	for p in map_data["pieces"]:
+		var pos := MapData.vec(p["pos"])
+		match p["type"]:
+			"angel_spawn": ANGEL_SPAWN = pos
+			"demon_spawn": DEMON_SPAWN = pos
+			"shrine": SHRINE_POS = pos
+			"bouncy": BOUNCIES.append(pos)
+			"bouncy_once": ONE_USE_BOUNCIES.append(pos)
+			"prop": PLACED_PROPS.append([p["prop"], pos, MapData.rot_rad(p)])
+	_build_map()
 
 
 func _build_map() -> void:
+	if world_root:
+		world_root.free()
+	world_root = Node3D.new()
+	world_root.name = "World"
+	add_child(world_root)
+	structures.clear()
+	shrine = null
+	var half: float = MAP_HALF
 	# Ground and boundary walls
-	_add_block(Vector3(0, -0.5, 0), Vector3(MAP_HALF * 2 + 2, 1, MAP_HALF * 2 + 2), Color(0.35, 0.55, 0.3), Vector3.ZERO, false)
-	var wall_color := Color(0.5, 0.48, 0.52)
-	var span := MAP_HALF * 2 + 2
-	_add_block(Vector3(0, 2, MAP_HALF + 1), Vector3(span, 4, 1), wall_color, Vector3.ZERO, false)
-	_add_block(Vector3(0, 2, -MAP_HALF - 1), Vector3(span, 4, 1), wall_color, Vector3.ZERO, false)
-	_add_block(Vector3(MAP_HALF + 1, 2, 0), Vector3(1, 4, span), wall_color, Vector3.ZERO, false)
-	_add_block(Vector3(-MAP_HALF - 1, 2, 0), Vector3(1, 4, span), wall_color, Vector3.ZERO, false)
+	_add_block(Vector3(0, -0.5, 0), Vector3(half * 2 + 2, 1, half * 2 + 2), Color(map_data["ground_color"]), Vector3.ZERO, false)
+	var wall_color := Color(map_data["wall_color"])
+	var span := half * 2 + 2
+	_add_block(Vector3(0, 2, half + 1), Vector3(span, 4, 1), wall_color, Vector3.ZERO, false)
+	_add_block(Vector3(0, 2, -half - 1), Vector3(span, 4, 1), wall_color, Vector3.ZERO, false)
+	_add_block(Vector3(half + 1, 2, 0), Vector3(1, 4, span), wall_color, Vector3.ZERO, false)
+	_add_block(Vector3(-half - 1, 2, 0), Vector3(1, 4, span), wall_color, Vector3.ZERO, false)
 	# Invisible walls above the visible ones, and a ceiling, so flying demons
 	# (and dashing angels) can't leave the map.
-	_add_invisible(Vector3(0, 17, MAP_HALF + 1), Vector3(span, 26, 1))
-	_add_invisible(Vector3(0, 17, -MAP_HALF - 1), Vector3(span, 26, 1))
-	_add_invisible(Vector3(MAP_HALF + 1, 17, 0), Vector3(1, 26, span))
-	_add_invisible(Vector3(-MAP_HALF - 1, 17, 0), Vector3(1, 26, span))
+	var wall_h: float = CEILING + 2.0
+	_add_invisible(Vector3(0, wall_h / 2.0 + 4.0, half + 1), Vector3(span, wall_h, 1))
+	_add_invisible(Vector3(0, wall_h / 2.0 + 4.0, -half - 1), Vector3(span, wall_h, 1))
+	_add_invisible(Vector3(half + 1, wall_h / 2.0 + 4.0, 0), Vector3(1, wall_h, span))
+	_add_invisible(Vector3(-half - 1, wall_h / 2.0 + 4.0, 0), Vector3(1, wall_h, span))
 	_add_invisible(Vector3(0, CEILING + 0.5, 0), Vector3(span, 1, span))
-	# Buildings and cover
-	_add_block(Vector3(8, 2, 8), Vector3(6, 4, 6), Color(0.7, 0.6, 0.5))
-	_add_block(Vector3(-10, 2, -6), Vector3(7, 4, 5), Color(0.6, 0.55, 0.65))
-	_add_block(Vector3(14, 4, -12), Vector3(3, 8, 3), Color(0.55, 0.5, 0.6))
-	_add_block(Vector3(-16, 0.5, -16), Vector3(6, 1, 6), Color(0.65, 0.6, 0.5))
-	_add_block(Vector3(18, 1.5, 14), Vector3(4, 3, 10), Color(0.6, 0.5, 0.45))
-	# The shrine: the only place to swap skills mid-round
-	shrine = Shrine.new()
-	add_child(shrine)
-	shrine.position = SHRINE_POS
-	structures.append([Vector2(SHRINE_POS.x, SHRINE_POS.z), 3.0])
-	# Bouncies that are always there (one-use ones come back every round)
-	for i in BOUNCIES.size():
-		var b := Bouncy.new()
-		b.bouncy_id = 1000 + i
-		add_child(b)
-		b.position = BOUNCIES[i]
-		structures.append([Vector2(BOUNCIES[i].x, BOUNCIES[i].z), 1.6])
-	for spot in ONE_USE_BOUNCIES:
-		structures.append([Vector2(spot.x, spot.z), 1.6])
-	# A raised platform with a ramp up to it
-	_add_block(Vector3(-6, 1, 12), Vector3(8, 2, 4), Color(0.6, 0.6, 0.55))
-	_add_block(Vector3(-6, 0.8, 7.3), Vector3(2.5, 0.4, 5.9), Color(0.5, 0.45, 0.4), Vector3(-0.35, 0, 0))   # top edge flush with the platform
+	# The map's own pieces
+	var permanent_bouncies := 0
+	for p in map_data["pieces"]:
+		var pos := MapData.vec(p["pos"])
+		match p["type"]:
+			"block", "cylinder":
+				_add_block(pos, MapData.vec(p["size"]), Color(p["color"]), MapData.rot_rad(p), true, p["type"] == "cylinder")
+			"shrine":
+				# The shrine: the only place to swap skills mid-round
+				shrine = Shrine.new()
+				world_root.add_child(shrine)
+				shrine.position = pos
+				structures.append([Vector2(pos.x, pos.z), 3.0])
+			"bouncy":
+				var b := Bouncy.new()
+				b.bouncy_id = 1000 + permanent_bouncies
+				permanent_bouncies += 1
+				world_root.add_child(b)
+				b.position = pos
+				structures.append([Vector2(pos.x, pos.z), 1.6])
+			"bouncy_once", "prop":
+				structures.append([Vector2(pos.x, pos.z), 1.6])   # (made fresh each round)
 
 
 const DASH_TRAIL := 4.5          # length of the sparkle trail others see behind a dash
 const WORLD_LAYER := 1         # everything real you can see and hit
 const BOUNDS_LAYER := 2        # invisible map walls and ceiling
-const CEILING := 24.0
+var CEILING := 24.0
 
 
 func _add_invisible(center: Vector3, size: Vector3) -> void:
+	_add_invisible_to(world_root, center, size)
+
+
+func _add_invisible_to(parent: Node, center: Vector3, size: Vector3) -> void:
 	var body := StaticBody3D.new()
 	var shape_node := CollisionShape3D.new()
 	var box := BoxShape3D.new()
@@ -609,7 +664,7 @@ func _add_invisible(center: Vector3, size: Vector3) -> void:
 	# throws go right through.
 	body.collision_layer = BOUNDS_LAYER
 	body.collision_mask = 0
-	add_child(body)
+	parent.add_child(body)
 
 
 func _random_spot() -> Vector3:
@@ -629,7 +684,7 @@ func _random_spot() -> Vector3:
 	return Vector3.ZERO
 
 
-func _spawn_prop(type_name: String, pos: Vector3) -> void:
+func _spawn_prop(type_name: String, pos: Vector3, rot = null) -> void:
 	var body := StaticBody3D.new()
 	body.add_to_group("prop")
 	body.set_meta("prop_type", type_name)
@@ -639,7 +694,10 @@ func _spawn_prop(type_name: String, pos: Vector3) -> void:
 	shape_node.position.y = PropLib.height(type_name) / 2.0
 	body.add_child(shape_node)
 	body.position = pos
-	body.rotation.y = rng.randf_range(0, TAU)
+	if rot == null:
+		body.rotation.y = rng.randf_range(0, TAU)
+	else:
+		body.rotation = rot
 	body.set_meta("prop_index", props.size())
 	props.append(body)
 	round_root.add_child(body)
@@ -670,6 +728,9 @@ func _reset_round_props(seed_value: int) -> void:
 		round_root.add_child(b)
 		b.position = ONE_USE_BOUNCIES[i]
 		bouncies[i] = b
+	# Props placed by hand on the map, then the random ones.
+	for pp in PLACED_PROPS:
+		_spawn_prop(pp[0], pp[1], pp[2])
 	var types := PropLib.type_names()
 	for i in PROP_COUNT:
 		_spawn_prop(types[rng.randi() % types.size()], _random_spot())
@@ -2074,7 +2135,8 @@ func fx(kind: String, args: Array) -> void:
 			if cherubs.has(args[0]) and is_instance_valid(cherubs[args[0]]):
 				cherubs[args[0]].alarmed = args[1]
 		"shrine":
-			shrine.flare()
+			if shrine:
+				shrine.flare()
 		"orb":
 			_spawn_orb(args[0], args[1], true)
 		"scripture":
@@ -2690,7 +2752,9 @@ func _update_hud(delta: float) -> void:
 	health_row.visible = mode == "online" and role == "demon"
 	if health_row.visible:
 		var max_hp := PropLib.max_hp(player.possessed_type)
-		_set_bar("health", "Health", my_health, Color.TRANSPARENT,
+		# The bar's right end is 150% (the most a demon can heal up to); over 100% it glows green.
+		var over := my_health > 1.001
+		_set_bar("health", "Health", my_health / PowerUps.MAX_HEALTH, Color(0.3, 0.85, 0.35) if over else Color.TRANSPARENT,
 				"%d / %d" % [int(ceil(my_health * max_hp)), max_hp])
 
 	var sprint_color := Color(0.85, 0.35, 0.3) if player._sprint_exhausted else Color(0.4, 0.85, 0.45)

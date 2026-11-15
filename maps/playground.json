@@ -1,0 +1,187 @@
+{
+ "format": 1,
+ "name": "Playground",
+ "author": "Halos & Horns",
+ "size": 28,
+ "ceiling": 24,
+ "ground_color": "#598c4c",
+ "wall_color": "#807a85",
+ "random_props": 45,
+ "pieces": [
+  {
+   "type": "block",
+   "pos": [
+    8,
+    2,
+    8
+   ],
+   "size": [
+    6,
+    4,
+    6
+   ],
+   "color": "#b29980"
+  },
+  {
+   "type": "block",
+   "pos": [
+    -10,
+    2,
+    -6
+   ],
+   "size": [
+    7,
+    4,
+    5
+   ],
+   "color": "#998ca6"
+  },
+  {
+   "type": "block",
+   "pos": [
+    14,
+    4,
+    -12
+   ],
+   "size": [
+    3,
+    8,
+    3
+   ],
+   "color": "#8c8099"
+  },
+  {
+   "type": "block",
+   "pos": [
+    -16,
+    0.5,
+    -16
+   ],
+   "size": [
+    6,
+    1,
+    6
+   ],
+   "color": "#a69980"
+  },
+  {
+   "type": "block",
+   "pos": [
+    18,
+    1.5,
+    14
+   ],
+   "size": [
+    4,
+    3,
+    10
+   ],
+   "color": "#998073"
+  },
+  {
+   "type": "shrine",
+   "pos": [
+    -20,
+    0,
+    4
+   ]
+  },
+  {
+   "type": "bouncy",
+   "pos": [
+    8,
+    0,
+    3.4
+   ]
+  },
+  {
+   "type": "bouncy",
+   "pos": [
+    14,
+    0,
+    -9.6
+   ]
+  },
+  {
+   "type": "bouncy",
+   "pos": [
+    -10,
+    0,
+    -2.2
+   ]
+  },
+  {
+   "type": "bouncy_once",
+   "pos": [
+    0,
+    0,
+    -14
+   ]
+  },
+  {
+   "type": "bouncy_once",
+   "pos": [
+    -18,
+    0,
+    15
+   ]
+  },
+  {
+   "type": "bouncy_once",
+   "pos": [
+    21,
+    0,
+    2
+   ]
+  },
+  {
+   "type": "block",
+   "pos": [
+    -6,
+    1,
+    12
+   ],
+   "size": [
+    8,
+    2,
+    4
+   ],
+   "color": "#99998c"
+  },
+  {
+   "type": "block",
+   "pos": [
+    -6,
+    0.8,
+    7.3
+   ],
+   "size": [
+    2.5,
+    0.4,
+    5.9
+   ],
+   "color": "#807366",
+   "rot": [
+    -20.053523,
+    0,
+    0
+   ]
+  },
+  {
+   "type": "angel_spawn",
+   "pos": [
+    0,
+    0.1,
+    -24
+   ]
+  },
+  {
+   "type": "demon_spawn",
+   "pos": [
+    0,
+    0.1,
+    0
+   ]
+  }
+ ]
+}

@@ -1,0 +1,194 @@
+# Maps are plain data: a list of pieces (what, where, how big, which way, what
+# colour) and nothing else. No code, so a map someone sends you can't do anything
+# but be a map. Everything read from a file goes through clean() first: unknown
+# piece types are dropped, numbers are clamped, and the whole thing is size-capped.
+#
+# Format (JSON):
+# {
+#   "format": 1, "name": "...", "author": "...",
+#   "size": 28,             # half the width of the play area (walls go around it)
+#   "ceiling": 24,          # how high anyone can fly
+#   "ground_color": "#598c4c", "wall_color": "#807a85",
+#   "random_props": 45,     # props scattered at random each round, on top of placed ones
+#   "pieces": [ {"type": "block", "pos": [x, y, z], "size": [x, y, z], "rot": [x, y, z] (degrees), "color": "#rrggbb"}, ... ]
+# }
+extends RefCounted
+
+const PropLib = preload("res://scripts/prop_library.gd")
+
+const FORMAT := 1
+const BUILT_IN := ["res://maps/playground.json"]
+const USER_DIR := "user://maps"
+const MAX_BYTES := 2 * 1024 * 1024
+const MAX_PIECES := 5000
+const MAX_COORD := 500.0
+
+# Piece types and what each one needs.
+#   block / cylinder: solid shapes (size, rot, color)
+#   prop: a real, possessable prop placed by hand ("prop": type, rot)
+#   bouncy / bouncy_once, shrine, angel_spawn, demon_spawn: special pieces (pos, rot)
+const TYPES := ["block", "cylinder", "prop", "bouncy", "bouncy_once", "shrine", "angel_spawn", "demon_spawn"]
+const SHAPED := ["block", "cylinder"]
+
+
+static func load_file(path: String) -> Dictionary:
+	if not FileAccess.file_exists(path):
+		return {}
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null or f.get_length() > MAX_BYTES:
+		return {}
+	return from_text(f.get_as_text())
+
+
+static func from_text(text: String) -> Dictionary:
+	if text.length() > MAX_BYTES:
+		return {}
+	var parsed = JSON.parse_string(text)
+	if typeof(parsed) != TYPE_DICTIONARY:
+		return {}
+	return clean(parsed)
+
+
+static func to_text(map: Dictionary) -> String:
+	return JSON.stringify(clean(map), " ")
+
+
+static func save_file(map: Dictionary, path: String) -> bool:
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return false
+	f.store_string(to_text(map))
+	return true
+
+
+# Every map we can play: built-in ones first, then the player's own.
+static func list_maps() -> Array:
+	var out := []
+	for p in BUILT_IN:
+		var m := load_file(p)
+		if not m.is_empty():
+			out.append({"path": p, "name": m["name"], "built_in": true})
+	DirAccess.make_dir_recursive_absolute(USER_DIR)
+	var d := DirAccess.open(USER_DIR)
+	if d:
+		var files := Array(d.get_files())
+		files.sort()
+		for fname in files:
+			if fname.ends_with(".json"):
+				var m := load_file(USER_DIR + "/" + fname)
+				if not m.is_empty():
+					out.append({"path": USER_DIR + "/" + fname, "name": m["name"], "built_in": false})
+	return out
+
+
+static func user_path_for(map_name: String) -> String:
+	var safe := ""
+	for ch in map_name.to_lower():
+		safe += ch if (ch >= "a" and ch <= "z") or (ch >= "0" and ch <= "9") else "_"
+	safe = safe.strip_edges().substr(0, 40)
+	return "%s/%s.json" % [USER_DIR, safe if safe.replace("_", "") != "" else "map"]
+
+
+static func empty_map(map_name := "New map") -> Dictionary:
+	return clean({"name": map_name, "size": 28, "random_props": 0, "pieces": [
+		{"type": "angel_spawn", "pos": [0, 0.1, -20]},
+		{"type": "demon_spawn", "pos": [0, 0.1, 0]},
+	]})
+
+
+# ---------------- checking ----------------
+
+static func _num(v, lo: float, hi: float, default: float) -> float:
+	if typeof(v) != TYPE_FLOAT and typeof(v) != TYPE_INT:
+		return default
+	var f := float(v)
+	if is_nan(f) or is_inf(f):
+		return default
+	return clampf(f, lo, hi)
+
+
+static func _vec(v, lo: float, hi: float, default: Vector3) -> Vector3:
+	if typeof(v) != TYPE_ARRAY or v.size() != 3:
+		return default
+	return Vector3(_num(v[0], lo, hi, default.x), _num(v[1], lo, hi, default.y), _num(v[2], lo, hi, default.z))
+
+
+static func _color(v, default: String) -> String:
+	if typeof(v) == TYPE_STRING and Color.html_is_valid(v):
+		return "#" + Color.html(v).to_html(false)
+	return default
+
+
+static func _text(v, default: String, max_len: int) -> String:
+	if typeof(v) != TYPE_STRING:
+		return default
+	var out := ""
+	for ch in v.substr(0, max_len):
+		if ch.unicode_at(0) >= 32:
+			out += ch
+	out = out.strip_edges()
+	return out if out != "" else default
+
+
+static func clean(raw: Dictionary) -> Dictionary:
+	var m := {
+		"format": FORMAT,
+		"name": _text(raw.get("name"), "Untitled map", 40),
+		"author": _text(raw.get("author"), "", 40),
+		"size": _num(raw.get("size"), 10.0, 200.0, 28.0),
+		"ceiling": _num(raw.get("ceiling"), 6.0, 120.0, 24.0),
+		"ground_color": _color(raw.get("ground_color"), "#598c4c"),
+		"wall_color": _color(raw.get("wall_color"), "#807a85"),
+		"random_props": int(_num(raw.get("random_props"), 0, 300, 0)),
+		"pieces": [],
+	}
+	var pieces = raw.get("pieces", [])
+	if typeof(pieces) != TYPE_ARRAY:
+		pieces = []
+	var shrines := 0
+	for p in pieces.slice(0, MAX_PIECES):
+		if typeof(p) != TYPE_DICTIONARY or not p.get("type") in TYPES:
+			continue
+		var t: String = p["type"]
+		var c := {"type": t, "pos": _arr(_vec(p.get("pos"), -MAX_COORD, MAX_COORD, Vector3.ZERO))}
+		var rot := _vec(p.get("rot"), -360.0, 360.0, Vector3.ZERO)
+		if rot != Vector3.ZERO:
+			c["rot"] = _arr(rot)
+		if t in SHAPED:
+			c["size"] = _arr(_vec(p.get("size"), 0.05, 400.0, Vector3.ONE))
+			c["color"] = _color(p.get("color"), "#a09080")
+		elif t == "prop":
+			if not PropLib.TYPES.has(p.get("prop")):
+				continue
+			c["prop"] = p["prop"]
+		elif t == "shrine":
+			shrines += 1
+			if shrines > 1:
+				continue   # one shrine per map, at most
+		m["pieces"].append(c)
+	# Every map needs somewhere for each side to start.
+	var has := func(kind): return m["pieces"].any(func(q): return q["type"] == kind)
+	if not has.call("angel_spawn"):
+		m["pieces"].append({"type": "angel_spawn", "pos": [0, 0.1, -m["size"] + 4.0]})
+	if not has.call("demon_spawn"):
+		m["pieces"].append({"type": "demon_spawn", "pos": [0, 0.1, 0]})
+	return m
+
+
+static func _arr(v: Vector3) -> Array:
+	return [snappedf(v.x, 0.001), snappedf(v.y, 0.001), snappedf(v.z, 0.001)]
+
+
+static func vec(a) -> Vector3:
+	return Vector3(a[0], a[1], a[2])
+
+
+static func rot_rad(piece: Dictionary) -> Vector3:
+	var r: Array = piece.get("rot", [0, 0, 0])
+	return Vector3(deg_to_rad(r[0]), deg_to_rad(r[1]), deg_to_rad(r[2]))
+
+
+# A fingerprint, so a joiner can tell they built exactly the host's map.
+static func fingerprint(map: Dictionary) -> String:
+	return to_text(map).md5_text()

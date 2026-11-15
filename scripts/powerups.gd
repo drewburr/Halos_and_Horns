@@ -25,6 +25,8 @@ const LABELS := {
 }
 const DURATION := {"sense": 15.0, "quick_throw": 12.0, "quick_skills": 15.0, "quick_run": 15.0, "fast_hatred": 15.0}
 
+const HEAL_AMOUNT := 0.5          # Unholy Mending: +50% of starting health...
+const MAX_HEALTH := 1.5           # ...up to 150% of it
 const LIFETIME := 40.0            # a pickup nobody takes disappears after this
 const MAX_EACH_TEAM := 3          # at most this many lying around per team
 const PICKUP_RANGE := 1.4

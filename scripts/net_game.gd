@@ -1138,7 +1138,7 @@ func damage_player(id: int, damage: int, by := 0) -> bool:
 
 @rpc("authority", "call_remote", "reliable")
 func s_you_hit(health_fraction: float) -> void:
-	main.online_you_hit(clampf(health_fraction, 0.0, 1.0))
+	main.online_you_hit(clampf(health_fraction, 0.0, PowerUps.MAX_HEALTH))
 
 
 # Mobification: a caught demon is redeemed and joins the angels.
@@ -1302,17 +1302,19 @@ func c_bouncy_used(id: int) -> void:
 	main.bouncy_used(id, who)
 
 
-# Unholy Mending: a demon's health back to full.
+# Unholy Mending: +50% of a demon's starting health, up to 150% (demons can be
+# tougher than they started out).
 func heal_player(id: int) -> void:
 	if not peers.has(id) or peers[id]["role"] != "demon":
 		return
-	peers[id]["hp"] = 1.0
-	print("[host] %s healed up" % peers[id]["name"])
+	var hp: float = minf(peers[id]["hp"] + PowerUps.HEAL_AMOUNT, PowerUps.MAX_HEALTH)
+	peers[id]["hp"] = hp
+	print("[host] %s healed up to %d%%" % [peers[id]["name"], int(round(hp * 100.0))])
 	if id == 1:
-		main.online_you_hit(1.0)
+		main.online_you_hit(hp)
 		main.player.powerup_taken.emit("heal")
 	else:
-		s_you_hit.rpc_id(id, 1.0)
+		s_you_hit.rpc_id(id, hp)
 		s_healed.rpc_id(id)
 
 
