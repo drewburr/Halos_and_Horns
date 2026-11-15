@@ -147,6 +147,8 @@ var _move_dir := Vector2.ZERO # last movement keys held (Holy Leap launches that
 var _leaping := false         # in the air from Holy Leap: strong steering, Cloud Stomp ready
 var _stomping := false
 var _leap_left := 0.0          # a stomp only counts this soon after the leap (the host allows 6 s)
+var _leap_peak := 0.0          # the highest we got since leaping (a stomp from higher hurts more)
+var _fear_phase := Vector2.ZERO
 
 var shape_node: CollisionShape3D
 var visual_root: Node3D
@@ -385,6 +387,11 @@ func _physics_process(delta: float) -> void:
 		want_run = true
 		want_jump = is_on_wall() and randf() < 0.1
 		sneaking = false
+		# ...and your aim shakes all over the place.
+		var tt := Time.get_ticks_msec() / 1000.0
+		var shake := Skills.FEAR_SHAKE * delta
+		rotation.y += shake * (sin(tt * 5.3 + _fear_phase.x) + 0.6 * sin(tt * 11.7 + _fear_phase.y))
+		pivot.rotation.x = clampf(pivot.rotation.x + shake * 0.6 * (sin(tt * 6.1 + _fear_phase.y) + 0.5 * sin(tt * 13.3 + _fear_phase.x)), -1.4, 1.4)
 	_move_dir = input_dir
 	_steer_minion()
 	_settle_view(delta, input_dir)
@@ -427,7 +434,7 @@ func _physics_process(delta: float) -> void:
 			velocity.y -= g * delta
 			_fall_speed = maxf(_fall_speed, -velocity.y)
 		if want_jump and on_floor:
-			velocity.y = tuning["jump_velocity"]
+			velocity.y = Skills.LEAPER_JUMP if _is_leaper() else tuning["jump_velocity"]
 
 		_update_sprint(delta, want_run and not sneaking and input_dir != Vector2.ZERO)
 
@@ -448,7 +455,7 @@ func _physics_process(delta: float) -> void:
 			rate = 0.0                     # no keys held in the air: keep your momentum
 			target = current
 		elif not on_floor:
-			rate = Skills.LEAP_AIR_ACCEL if _leaping else tuning["air_accel"]
+			rate = Skills.LEAP_AIR_ACCEL if _leaping else (Skills.LEAPER_AIR_ACCEL if _is_leaper() else tuning["air_accel"])
 		elif target.length() < current.length():
 			rate = tuning["ground_decel"]
 		else:
@@ -458,6 +465,8 @@ func _physics_process(delta: float) -> void:
 		velocity.x = current.x + _momentum.x
 		velocity.z = current.y + _momentum.y
 	_leap_left = maxf(_leap_left - delta, 0.0)
+	if _leaping:
+		_leap_peak = maxf(_leap_peak, global_position.y)
 	if _stomping:
 		clear_dash()
 		velocity = Vector3(0.0, -Skills.STOMP_SPEED, 0.0)
@@ -473,7 +482,9 @@ func _physics_process(delta: float) -> void:
 	if is_on_floor() and (_leaping or _stomping) and velocity.y <= 0.0:
 		if _stomping:
 			# Cloud Stomp landed: the host / practice game decides who it hurts.
-			skill_used.emit("stomp", global_position, Vector3.DOWN, global_position, -1)
+			# (point.y = the highest we got: the higher, the harder it hits)
+			var top := Vector3(global_position.x, maxf(_leap_peak, global_position.y), global_position.z)
+			skill_used.emit("stomp", global_position, Vector3.DOWN, top, -1)
 		_leaping = false
 		_stomping = false
 	if burning > 0.0:
@@ -680,7 +691,7 @@ func use_skill(slot: int) -> bool:
 	if id == "leap" and _leaping and not _stomping and not is_on_floor() and not frozen and _leap_left > 0.0:
 		_stomping = true
 		return true
-	if id == "" or frozen or feared > 0.0 or skill_cd.get(id, 0.0) > 0.0 or Skills.SKILLS[id].get("hold", false):
+	if id == "" or frozen or skill_cd.get(id, 0.0) > 0.0 or Skills.SKILLS[id].get("hold", false):
 		return false
 	if role == "demon" and skill_lock > 0.0:
 		return false
@@ -744,6 +755,7 @@ func use_skill(slot: int) -> bool:
 			velocity.z = flat.z
 			_leaping = true
 			_leap_left = 5.5
+			_leap_peak = global_position.y
 		"kick":
 			origin = pivot.global_position     # reach is measured from us, not the camera
 			Effects.swing(get_parent(), origin - Vector3.UP * 0.8, dir)
@@ -755,7 +767,7 @@ func use_skill(slot: int) -> bool:
 
 
 func melee() -> bool:
-	if melee_cd > 0.0 or frozen or feared > 0.0 or role != "angel":
+	if melee_cd > 0.0 or frozen or role != "angel":
 		return false
 	melee_cd = Skills.MELEE_COOLDOWN
 	var origin := pivot.global_position   # on the crosshair line in both views, at our own head
@@ -797,6 +809,11 @@ func apply_powerup(kind: String) -> void:
 	powerup_taken.emit(kind)
 
 
+# Holy Leap picked: every ordinary jump is higher and easier to steer.
+func _is_leaper() -> bool:
+	return role == "angel" and "leap" in loadout["angel"]
+
+
 # A demon's Fear caught us: panic for a few seconds.
 func scare(from: Vector3, seconds: float) -> void:
 	if role != "angel":
@@ -804,6 +821,7 @@ func scare(from: Vector3, seconds: float) -> void:
 	feared = maxf(feared, clampf(seconds, 0.0, Skills.FEAR_TIME))
 	_fear_from = from
 	_fear_dir = Vector3.ZERO
+	_fear_phase = Vector2(randf() * TAU, randf() * TAU)
 	scared.emit()
 
 
@@ -984,7 +1002,7 @@ var on_claim: Callable           # set by the network code for joined players
 
 
 func try_throw() -> bool:
-	if _throw_cooldown > 0.0 or throw_stamina < THROW_COST or feared > 0.0:
+	if _throw_cooldown > 0.0 or throw_stamina < THROW_COST:
 		return false
 	_throw_strength = clampf(throw_stamina / (THROW_STAMINA_MAX * WEAK_THROW_BELOW), 0.0, 1.0)
 	throw_stamina -= THROW_COST

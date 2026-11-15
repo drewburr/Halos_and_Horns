@@ -13,7 +13,7 @@ const SKILLS := {
 	"vacuum": {"team": "angel", "label": "Vacuum Orb", "cooldown": 8.0,
 		"desc": "Throw into a pile of props: sucks them in, yanks hidden demons hard, drains their Hatred and locks their skills for 2 seconds."},
 	"leap": {"team": "angel", "label": "Holy Leap", "cooldown": 8.0,
-		"desc": "A magnificent jump you can steer in the air. Press the key again mid-air to Cloud Stomp: slam down and hurt demons where you land."},
+		"desc": "A magnificent jump you can steer in the air. Press the key again mid-air to Cloud Stomp: slam down and hurt every demon around where you land (most in the middle, more the higher you came from). Having it picked also makes all your ordinary jumps higher and easier to steer."},
 	"scripture": {"team": "angel", "label": "Holy Scripture", "cooldown": 5.0,
 		"desc": "Hurl a heavy holy book. Slow and arcing, but it hits a demon far harder than a blessing."},
 	"kick": {"team": "angel", "label": "Holy Kick", "cooldown": 4.0,
@@ -29,8 +29,8 @@ const SKILLS := {
 		"desc": "Blink to where your crosshair points, up to 20 m away (further than that: as far as you can go that way). Very expensive."},
 	"fire": {"team": "demon", "label": "Hellfire", "cooldown": 2.0, "hatred": 35.0,
 		"desc": "Fling a fireball from your hands; where it lands, fire burns for 6 seconds. Angels caught in it are slowed, stagger about, can barely see straight and their blessings burn away. Costs Hatred, and the fireball shows where it came from."},
-	"fear": {"team": "demon", "label": "Fear", "cooldown": 20.0, "hatred": 45.0,
-		"desc": "Let out a hellish shriek. Every angel within 10 m who can see you panics for 3 seconds: they run off in a blind scatter, away from you, and can't throw or use skills until it wears off."},
+	"fear": {"team": "demon", "label": "Fear", "cooldown": 15.0, "hatred": 55.0,
+		"desc": "Let out a hellish shriek. Every angel within 10 m who can see you panics for 2 seconds: they run off in a blind scatter, away from you, and their aim shakes all over the place (they can still throw, swing and use skills, good luck hitting anything)."},
 	"possess": {"team": "demon", "label": "Possess", "cooldown": 1.5,
 		"desc": "Become a real prop instead of a copy (press its key while aiming at the prop). The one you leave behind slowly dissolves."},
 }
@@ -55,12 +55,18 @@ const SCRIPTURE_SPEED := 24.0
 const SCRIPTURE_GRAVITY := 14.0
 const KICK_RANGE := 2.8
 const FEAR_RADIUS := 10.0
-const FEAR_TIME := 3.0
+const FEAR_TIME := 2.0
+const FEAR_SHAKE := 1.6           # how hard a panicking angel's aim shakes (radians/second)
 const KICK_PUSH := 7.0            # how far a kicked demon flies
 const KICK_DAMAGE := 20           # (melee is 34)
 const STOMP_SPEED := 30.0
-const STOMP_RADIUS := 4.0
-const STOMP_DAMAGE := 15
+const STOMP_RADIUS := 6.0        # everything within this of where you land gets hurt...
+const STOMP_DAMAGE := 25          # ...this much right in the middle, from an ordinary leap
+const STOMP_MIN_DAMAGE := 5       # ...at least this much at the very edge
+const STOMP_BASE_HEIGHT := 5.0    # an ordinary leap comes down from about this high
+const STOMP_FULL_HEIGHT := 15.0   # from this high up (or more): double damage
+const LEAPER_JUMP := 8.0          # ordinary jumps with Holy Leap picked (normal: 5.6)
+const LEAPER_AIR_ACCEL := 24.0    # ...and steering in the air (normal: 12)
 # Hatred for naughtiness (handed out by the host)
 const NAUGHTY_FIRE_PER_SEC := 4.0   # per angel standing in your fire
 const NAUGHTY_MINION_HIT := 8.0     # an angel wasted a hit on your minion
@@ -87,6 +93,16 @@ const LEAP_VELOCITY := 12.0
 const MELEE_RANGE := 2.6
 const MELEE_DAMAGE := 34          # three hits on a full-health demon
 const MELEE_COOLDOWN := 0.6
+
+
+# Cloud Stomp: how much it hurts a demon this far (sideways) from where it landed,
+# after coming down from this high up.
+static func stomp_damage(dist: float, drop: float) -> int:
+	if dist > STOMP_RADIUS:
+		return 0
+	var near := 1.0 - dist / STOMP_RADIUS
+	var high := 1.0 + clampf((drop - STOMP_BASE_HEIGHT) / (STOMP_FULL_HEIGHT - STOMP_BASE_HEIGHT), 0.0, 1.0)
+	return maxi(STOMP_MIN_DAMAGE, roundi(STOMP_DAMAGE * near * high))
 
 
 static func label(id: String) -> String:

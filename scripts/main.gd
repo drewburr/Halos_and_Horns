@@ -1819,16 +1819,20 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 				broadcast_fx("kick", [c.global_position + Vector3.UP * 0.6])
 				print("[decider] holy kick sent a demon flying")
 		"stomp":
+			# Hurts every demon around where it landed: most in the middle, more from higher up.
+			var drop := clampf(point.y - origin.y, 0.0, 40.0)
+			if net and net.is_host and user_key > 1:
+				drop = minf(drop, net.leap_drop(user_key, origin))   # no more than the host saw them climb
 			var hurt := 0
 			for d in demon_targets():
 				var off: Vector3 = d.global_position - origin
-				if Vector2(off.x, off.z).length() <= Skills.STOMP_RADIUS and absf(off.y) < 2.5 \
-						and d.has_method("take_hit") and d.take_hit(Skills.STOMP_DAMAGE, user):
+				var dmg := Skills.stomp_damage(Vector2(off.x, off.z).length(), drop)
+				if dmg > 0 and absf(off.y) < 3.0 and d.has_method("take_hit") and d.take_hit(dmg, user):
 					hurt += 1
 			if hurt > 0 and user.has_method("confirm_hit"):
 				user.confirm_hit()
 			broadcast_fx("stomp", [origin])
-			print("[decider] cloud stomp hit %d demon(s)" % hurt)
+			print("[decider] cloud stomp hit %d demon(s) (from %.1f m up)" % [hurt, drop])
 		"vacuum":
 			var orb := _spawn_orb(origin, dir, false)
 			orb.shooter = user
@@ -2307,7 +2311,10 @@ func fx(kind: String, args: Array) -> void:
 		"minion_pop":
 			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.6, Color(0.35, 0.05, 0.08, 0.8), 1.6)
 		"stomp":
-			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.2, Color(1.0, 1.0, 1.0, 0.75), Skills.STOMP_RADIUS * 1.5)
+			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.2, Color(1.0, 1.0, 1.0, 0.75), Skills.STOMP_RADIUS * 1.2)
+			for i in 10:   # a shockwave ring out to the edge of where it hurts
+				var a := TAU * i / 10.0
+				Effects.puff(_fx_parent(), args[0] + Vector3(cos(a), 0.3, sin(a)) * Skills.STOMP_RADIUS * 0.8, Color(1.0, 0.97, 0.8, 0.6), 1.6)
 			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.6, Color(1.0, 0.95, 0.7, 0.6), 2.0)
 		"vortex":
 			var v := Vortex.new()

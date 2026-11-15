@@ -707,6 +707,8 @@ func c_state(pos: Vector3, yaw: float, form: String, flying: bool) -> void:
 	if pos.distance_to(rec["pos"]) > 0.05 or absf(wrapf(yaw - rec["yaw"], -PI, PI)) > 0.02:
 		_mark_active(id)
 	rec["pos"] = pos
+	if t < rec.get("leap_at", -100.0) + 6.0:
+		rec["leap_peak"] = maxf(rec.get("leap_peak", pos.y), pos.y)
 	_record_history(id, pos)
 	rec["valid_pos"] = pos
 	rec["yaw"] = yaw
@@ -1627,9 +1629,17 @@ func _skill_allowed(id: int, skill: String, origin: Vector3) -> bool:
 		rec["hatred"] -= cost
 	if skill == "leap":
 		rec["leap_at"] = t
+		rec["leap_peak"] = origin.y
 	var cd := Skills.cooldown(skill) / (3.0 if t < rec.get("quick_skills_until", 0.0) else 1.0)
 	rec["skill_ready"][skill] = t + cd
 	return true
+
+
+# Cloud Stomp from a joined player: how far they really came down (what the host saw, plus a little slack).
+func leap_drop(id: int, landed: Vector3) -> float:
+	if not peers.has(id):
+		return 0.0
+	return maxf(peers[id].get("leap_peak", landed.y) - landed.y + 1.0, 0.0)
 
 
 func on_local_skill(skill: String, origin: Vector3, dir: Vector3, point: Vector3, index: int) -> void:

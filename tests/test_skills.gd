@@ -657,6 +657,30 @@ func _run() -> void:
 	player.velocity = Vector3.ZERO
 	await frames(20)
 
+	# Cloud Stomp damage: most in the middle, more from higher up (to a limit), none past the edge.
+	check(Skills.stomp_damage(0.0, 5.0) == 25 and Skills.stomp_damage(0.0, 15.0) == 50 and Skills.stomp_damage(0.0, 40.0) == 50,
+			"Cloud Stomp: 25 in the middle from a normal leap, double from high up, no more than that")
+	check(Skills.stomp_damage(3.0, 5.0) < 25 and Skills.stomp_damage(3.0, 5.0) > Skills.stomp_damage(5.5, 5.0) and Skills.stomp_damage(5.9, 5.0) == 5 and Skills.stomp_damage(6.5, 5.0) == 0,
+			"...less further out, a little at the edge, nothing past it")
+	# Holy Leap picked: ordinary jumps go higher.
+	var jump_peaks := []
+	for lo in [["cherub", "vacuum"], ["cherub", "leap"]]:
+		player.loadout["angel"] = lo
+		player.global_position = clear_spot(Vector3(6, 0.1, 18))
+		player.velocity = Vector3.ZERO
+		await frames(15)
+		var ground_y: float = player.global_position.y
+		player.test_input = {"jump": true}
+		await frames(2)
+		player.test_input = {}
+		var jpeak := ground_y
+		for f in 60:
+			await frames(1)
+			jpeak = maxf(jpeak, player.global_position.y)
+		jump_peaks.append(jpeak - ground_y)
+	check(jump_peaks[1] > jump_peaks[0] * 1.6, "Holy Leap picked: ordinary jumps go much higher (%.1f m vs %.1f m)" % [jump_peaks[1], jump_peaks[0]])
+	player.loadout["angel"] = ["dash", "leap"]
+
 	# Cloud Stomp: press the leap key again mid-air, slam down, hurt demons nearby.
 	var victim = null
 	for b in get_nodes_in_group("demon"):
@@ -684,7 +708,9 @@ func _run() -> void:
 			t_stomp += 1
 		await frames(3)
 		check(t_stomp < 20, "...slams straight down (%d frames)" % t_stomp)
-		check(victim.health == hp_before - Skills.STOMP_DAMAGE, "...and hurts the demon it lands next to")
+		var st_off: Vector3 = victim.global_position - player.global_position
+		var st_want := Skills.stomp_damage(Vector2(st_off.x, st_off.z).length(), player._leap_peak - player.global_position.y)
+		check(st_want > 0 and hp_before - victim.health == st_want, "...and hurts the demon it lands near (%d damage, %.1f m away, from %.1f m up)" % [hp_before - victim.health, Vector2(st_off.x, st_off.z).length(), player._leap_peak - player.global_position.y])
 		check(not player.use_skill(1), "...one stomp per leap (the cooldown is still running)")
 
 	# Holy Scripture: a heavy book that hits hard.
@@ -950,14 +976,17 @@ func _run() -> void:
 	player.throw_stamina = 100.0
 	await frames(5)
 	main.authority_skill(shrieker, 7, "fear", shrieker.global_position, Vector3.FORWARD, Vector3.ZERO, -1)
-	check(player.feared > 2.5, "Fear: an angel nearby panics")
-	check(not player.try_throw() and not player.melee() and not player.use_skill(0), "...and can't throw, swing or use skills")
+	check(player.feared > 1.8, "Fear: an angel nearby panics")
+	check(player.try_throw(), "...but can still throw (good luck aiming)")
 	var fear_d0: float = player.global_position.distance_to(shrieker.global_position)
-	await frames(60)
+	var fear_yaw0: float = player.rotation.y
+	var fear_pitch0: float = player.pivot.rotation.x
+	await frames(45)
 	var fear_d1: float = player.global_position.distance_to(shrieker.global_position)
 	check(fear_d1 > fear_d0 + 2.0, "...and runs off, away from the demon (%.1f m -> %.1f m)" % [fear_d0, fear_d1])
-	await frames(150)
-	check(player.feared <= 0.0, "...and it wears off after 3 seconds")
+	check(absf(player.rotation.y - fear_yaw0) > 0.05 or absf(player.pivot.rotation.x - fear_pitch0) > 0.05, "...with their aim shaking all over")
+	await frames(110)
+	check(player.feared <= 0.0, "...and it wears off after 2 seconds")
 	player.global_position = fear_at + Vector3(12, 0, 0)
 	await frames(3)
 	player.feared = 0.0
