@@ -184,11 +184,11 @@ func _play_demon(delta: float, p) -> void:
 	log_line("hiding as a copy of a " + p.possessed_type)
 
 
-# Hidden demon with Invisibility / Teleport: try each once during the hunt.
+# Hidden demon with Teleport: try it once during the hunt.
 func _try_escape(p) -> void:
 	if main.state != main.State.HUNTING:
 		return
-	for id in ["vanish", "teleport"]:
+	for id in ["teleport"]:
 		var slot: int = p.loadout["demon"].find(id)
 		if slot < 0 or _used.has(id):
 			continue

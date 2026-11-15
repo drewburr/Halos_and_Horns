@@ -3,6 +3,7 @@
 extends SceneTree
 
 const Skills = preload("res://scripts/skills.gd")
+const PowerUps = preload("res://scripts/powerups.gd")
 const PropLib = preload("res://scripts/prop_library.gd")
 
 var main: Node
@@ -897,12 +898,12 @@ func _run() -> void:
 			"something on your head doesn't pin you in place")
 	sitter.queue_free()
 
-	# Invisibility and Teleport.
-	player.loadout["demon"] = ["vanish", "teleport"]
+	# Invisibility is a power-up now, not a skill; and Teleport.
+	check(not Skills.SKILLS.has("vanish") and "vanish" in PowerUps.DEMON_KINDS, "Invisibility is a demon power-up, not a skill")
+	player.apply_powerup("vanish")
+	check(player.vanish_time > 6.0, "...picking it up: you vanish for 6.5 s")
+	player.loadout["demon"] = ["minion", "teleport"]
 	player.skill_cd.clear()
-	player.hatred = 100.0
-	check(player.use_skill(0), "Invisibility")
-	check(player.vanish_time > 6.0 and player.hatred < 65.0, "...you vanish for 6.5 s, for 40 Hatred")
 	await frames(10)
 	player.hatred = 100.0
 	player.global_position = clear_lane(Vector3(0, 0.1, 22), Vector3(0, 0, -1), 22.0)

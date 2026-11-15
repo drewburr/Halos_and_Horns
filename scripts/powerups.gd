@@ -4,6 +4,9 @@
 # so often: more often with more players, and more often the more the demons are
 # moving about. Demons have to sneak up close to grab them.
 #
+# Demon power-ups: Hatred Surge, Fire Burst, Unholy Mending (healing) and
+# Invisibility (6.5 s where the angels get no trace of you at all).
+#
 # Angel power-ups: every redeemed demon drops one where it was caught. And so a
 # new or struggling angel isn't left with nothing, if nobody has found or hit a
 # demon for a while, one turns up near an angel.
@@ -17,11 +20,11 @@ const Skills = preload("res://scripts/skills.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 
 const ANGEL_KINDS := ["sense", "quick_throw", "quick_skills", "quick_run"]
-const DEMON_KINDS := ["fast_hatred", "fire_burst", "heal", "heal"]   # (healing turns up twice as often)
+const DEMON_KINDS := ["fast_hatred", "fire_burst", "heal", "heal", "vanish"]   # (healing turns up twice as often)
 const LABELS := {
 	"sense": "Cherub Sense", "quick_throw": "Quick Blessings", "quick_skills": "Quick Skills",
 	"quick_run": "Endless Sprint", "fast_hatred": "Hatred Surge", "fire_burst": "Fire Burst",
-	"heal": "Unholy Mending",
+	"heal": "Unholy Mending", "vanish": "Invisibility",
 }
 const DURATION := {"sense": 15.0, "quick_throw": 12.0, "quick_skills": 15.0, "quick_run": 15.0, "fast_hatred": 15.0}
 
@@ -171,7 +174,7 @@ func _remove(id: int, taken: bool) -> void:
 func show_item(id: int, kind: String, pos: Vector3) -> void:
 	var n := Node3D.new()
 	var angel := kind in ANGEL_KINDS
-	var color := Color(1.0, 0.88, 0.35) if angel else (Color(0.3, 0.9, 0.35) if kind == "heal" else Color(0.9, 0.15, 0.1))
+	var color: Color = Color(1.0, 0.88, 0.35) if angel else {"heal": Color(0.3, 0.9, 0.35), "vanish": Color(0.6, 0.35, 0.95)}.get(kind, Color(0.9, 0.15, 0.1))
 	var gem := MeshInstance3D.new()
 	var s := SphereMesh.new()
 	s.radius = 0.28

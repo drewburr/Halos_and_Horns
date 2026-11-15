@@ -668,9 +668,6 @@ func use_skill(slot: int) -> bool:
 	var point := Vector3.ZERO
 	var index := -1
 	match id:
-		"vanish":
-			hatred -= Skills.hatred_cost(id)
-			vanish_time = Skills.VANISH_TIME
 		"teleport":
 			# Where to: the spot under the crosshair, or as far as allowed that way.
 			var spot := _aim_ray(150.0)
@@ -770,6 +767,8 @@ signal powerup_taken(kind)
 
 
 func apply_powerup(kind: String) -> void:
+	if kind == "vanish":
+		vanish_time = Skills.VANISH_TIME
 	powerups[kind] = PowerUps.DURATION.get(kind, 0.0)
 	powerup_taken.emit(kind)
 

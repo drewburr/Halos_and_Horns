@@ -25,8 +25,6 @@ const SKILLS := {
 		"desc": "Hold the key to rise, spending Hatred (about 5-6 seconds from full). Let go and you fall. No fall damage."},
 	"minion": {"team": "demon", "label": "Minion", "cooldown": 2.0, "hatred": 30.0,
 		"desc": "Press to quietly make a decoy of yourself (or the prop you're disguised as) where your crosshair is. Hold the key to steer it: it walks to the ground under your crosshair. It moves like a real player and bumps into things; hits on it look and sound like hits on a demon, but it's flimsy and pops after a hit or two (or 20 seconds). One at a time."},
-	"vanish": {"team": "demon", "label": "Invisibility", "cooldown": 20.0, "hatred": 40.0,
-		"desc": "Disappear completely for 6.5 seconds: angels can't see you at all (you can still be hit, if they guess right). For quick getaways."},
 	"teleport": {"team": "demon", "label": "Teleport", "cooldown": 25.0, "hatred": 60.0,
 		"desc": "Blink to where your crosshair points, up to 20 m away (further than that: as far as you can go that way). Very expensive."},
 	"fire": {"team": "demon", "label": "Hellfire", "cooldown": 2.0, "hatred": 35.0,
@@ -64,7 +62,7 @@ const NAUGHTY_FIRE_PER_SEC := 4.0   # per angel standing in your fire
 const NAUGHTY_MINION_HIT := 8.0     # an angel wasted a hit on your minion
 const NAUGHTY_TAUNT := 4.0          # taunting with an angel within 12 m (at most every 6 s)
 const NAUGHTY_TAUNT_RANGE := 12.0
-const VANISH_TIME := 6.5
+const VANISH_TIME := 6.5          # the Invisibility power-up
 const TELEPORT_RANGE := 20.0
 const MINION_LIFETIME := 20.0
 const MINION_RANGE := 30.0        # how far away you can make one appear
@@ -118,6 +116,8 @@ static func clean_loadout(team: String, wanted) -> Array:
 			id = "cherub"   # renamed in 0.4
 		if id == "grapple":
 			id = "dash"     # the hook became the Flying Dash
+		if id == "vanish":
+			id = "minion"   # Invisibility became a power-up in 0.5.2
 		if typeof(id) == TYPE_STRING and SKILLS.has(id) and SKILLS[id]["team"] == team \
 				and not SKILLS[id].has("part_of") and not id in out:
 			out[i] = id

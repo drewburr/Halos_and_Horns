@@ -1755,9 +1755,6 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 		"minion":
 			if net and net.is_host:
 				net.minion_spawned(user_key, point, index)
-		"vanish":
-			if net and net.is_host:
-				net.set_vanished(user_key, Skills.VANISH_TIME)
 		"teleport":
 			var from: Vector3 = user.global_position
 			if Vector2(point.x - from.x, point.z - from.z).length() > Skills.TELEPORT_RANGE + 3.0:
@@ -2032,6 +2029,8 @@ func give_powerup(user_key: int, kind: String, where: Vector3) -> void:
 		if mode == "online" and net:
 			net.heal_player(user_key)
 		return
+	if kind == "vanish" and net and net.is_host:
+		net.set_vanished(user_key, Skills.VANISH_TIME)   # the angels stop hearing about them
 	if mode == "practice":
 		player.apply_powerup(kind)
 	elif net:
