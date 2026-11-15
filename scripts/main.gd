@@ -22,10 +22,14 @@ const Keybinds = preload("res://scripts/keybinds.gd")
 const Bouncy = preload("res://scripts/bouncy.gd")
 const Shrine = preload("res://scripts/shrine.gd")
 const MapData = preload("res://scripts/map_data.gd")
+const Editor = preload("res://scripts/editor.gd")
 # The current map's layout (filled in by load_map from the map file).
 var map_data := {}
 var map_path := ""
 var world_root: Node3D           # everything the map file built (rebuilt when the map changes)
+var editor                       # Creative mode (made the first time it's opened)
+var _editor_map := {}            # the last map built in Creative (reopened next time)
+var _back_to_editor: Button
 var SHRINE_POS := Vector3(0, -1000, 0)   # the map's one shrine (far away if it has none)
 var BOUNCIES := []               # permanent bouncy spots
 var ONE_USE_BOUNCIES := []       # one-use bouncy spots (they come back each round)
@@ -254,6 +258,8 @@ func _setup_input() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if mode == "editor":
+		return   # Creative handles its own keys
 	if mode == "menu":
 		if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE and controls_panel.visible:
 			_close_controls()
@@ -299,6 +305,11 @@ func _any_panel_open() -> bool:
 
 
 func _refresh_mouse() -> void:
+	if mode == "editor":
+		player.input_enabled = false
+		if DisplayServer.get_name() != "headless":
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		return
 	var ui_open := _any_panel_open()
 	player.input_enabled = not ui_open
 	if DisplayServer.get_name() != "headless":
@@ -827,6 +838,7 @@ func _build_menu() -> void:
 	name_edit = _field(box, "Your name", "Name")
 	_build_loadout(box)
 	_button(box, "Practice (single player)", start_practice)
+	_button(box, "Creative (build maps)", open_editor)
 	box.add_child(HSeparator.new())
 	port_edit = _field(box, "Port", str(NetGame.DEFAULT_PORT))
 	_button(box, "Host a game", _on_host_pressed)
@@ -859,6 +871,8 @@ func _build_pause_menu() -> void:
 	_button(box, "Resume", func():
 		pause_panel.visible = false
 		_refresh_mouse())
+	_back_to_editor = _button(box, "Back to Creative", back_to_editor)
+	_back_to_editor.visible = false
 	_button(box, "Controls", _open_controls)
 	_button(box, "Leave to main menu", func(): _show_menu(""))
 	pause_panel.visible = false
@@ -1162,6 +1176,15 @@ func _show_menu(message: String) -> void:
 		net.name = "NetOld"
 		net.queue_free()
 		net = null
+	var was_building: bool = editor != null and (editor.active() or editor.testing)
+	if editor:
+		editor.leave()
+	if _back_to_editor:
+		_back_to_editor.visible = false
+	if was_building:
+		hud_layer.visible = true
+		player.camera.current = true
+		load_map(MapData.load_file(MapData.BUILT_IN[0]), MapData.BUILT_IN[0])
 	mode = "menu"
 	state = State.LOBBY
 	player.net_mode = ""
@@ -1281,6 +1304,64 @@ func _local_ips() -> Array:
 
 
 # ---------- practice rounds ----------
+
+# ---------- Creative mode ----------
+
+func open_editor() -> void:
+	_hide_menus()
+	if round_root:
+		round_root.free()
+		round_root = null
+	mode = "editor"
+	state = State.LOBBY
+	player.frozen = true
+	player.visual_root.visible = false
+	hud_layer.visible = false
+	if editor == null:
+		editor = Editor.new()
+		editor.main = self
+		add_child(editor)
+	var start: Dictionary = _editor_map if not _editor_map.is_empty() else MapData.empty_map()
+	if _editor_map.is_empty():
+		start["author"] = name_edit.text.strip_edges()
+	editor.enter(start, _editor_map.get("_path", ""))
+	_refresh_mouse()
+
+
+# Creative: play a practice round on the map being built.
+func test_map_from_editor(map: Dictionary) -> void:
+	_editor_map = map.duplicate(true)
+	hud_layer.visible = true
+	player.camera.current = true
+	player.visual_root.visible = true
+	load_map(map, "")
+	_back_to_editor.visible = true
+	start_practice()
+	_toast("Testing your map. Esc, then \"Back to Creative\" to keep building.", 5.0)
+
+
+func back_to_editor() -> void:
+	pause_panel.visible = false
+	_back_to_editor.visible = false
+	if round_root:
+		round_root.free()
+		round_root = null
+	blind_rect.visible = false
+	center_label.text = ""
+	mode = "editor"
+	state = State.LOBBY
+	player.frozen = true
+	player.visual_root.visible = false
+	hud_layer.visible = false
+	editor.wake()
+	_refresh_mouse()
+
+
+func leave_editor() -> void:
+	_editor_map = editor.map.duplicate(true)
+	_editor_map["_path"] = editor.path
+	_show_menu("")
+
 
 func start_practice() -> void:
 	_hide_menus()
