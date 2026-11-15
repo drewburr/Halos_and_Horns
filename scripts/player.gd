@@ -610,6 +610,23 @@ func _mantle_step(delta: float) -> void:
 	velocity = Vector3.ZERO
 
 
+# A bouncy flung us upward. (Returns whether it took: frozen players don't bounce.)
+func bounce(up_speed: float) -> bool:
+	if frozen:
+		return false
+	velocity.y = up_speed
+	_fall_speed = 0.0
+	_leaping = false
+	_stomping = false
+	_mantle_time = 0.0
+	clear_dash()
+	bounced.emit()
+	return true
+
+
+signal bounced
+
+
 # The decider moved us (Teleport).
 func teleport_to(pos: Vector3) -> void:
 	global_position = pos + Vector3.UP * 0.05

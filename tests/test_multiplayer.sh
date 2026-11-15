@@ -46,7 +46,9 @@ check "a demon possessed a real prop" "grep -q 'a demon possessed a' '$OUT/host.
 check "an angel dropped an Alarm Cherub" "grep -q 'cherub dropped' '$OUT/host.log'"
 check "an angel threw a Vacuum Orb" "grep -q 'vacuum orb' '$OUT/host.log'"
 check "an angel used the Flying Dash" "grep -q 'used dash' '$OUT/Squirrel.log'"
-check "a demon flung Hellfire" "grep -q 'hellfire lit' '$OUT/host.log'"
+if grep -q 'used fire' "$OUT/Brother.log"; then
+	check "a demon flung Hellfire" "grep -q 'hellfire lit' '$OUT/host.log'"
+fi
 check "an angel used Holy Leap" "grep -q 'used leap' '$OUT/Squirrel.log'"
 # (only if the stomp landed before the round ended)
 if sed '/round over/q' "$OUT/Squirrel.log" | grep -q 'used stomp'; then

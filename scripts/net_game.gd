@@ -1167,6 +1167,7 @@ func _catch(id: int) -> void:
 		main.online_you_were_caught(rec["pos"], by_name)
 	else:
 		s_you_were_caught.rpc_id(id, rec["pos"], by_name)
+	_show_team_powerups(id)   # (their old team's power-ups vanish on their side)
 	# Everyone hears about it: "Wife redeemed Brother!"
 	var news := ("%s redeemed %s!" % [by_name, rec["name"]]) if by_name != "" else ("%s was redeemed!" % rec["name"])
 	print("[host] " + news)
@@ -1286,6 +1287,38 @@ func give_powerup(id: int, kind: String) -> void:
 func s_powerup(kind: String) -> void:
 	if PowerUps.LABELS.has(kind):
 		main.player.apply_powerup(kind)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func c_bouncy_used(id: int) -> void:
+	if not is_host:
+		return
+	var who := multiplayer.get_remote_sender_id()
+	if not peers.has(who) or not main.bouncies.has(id) or not is_instance_valid(main.bouncies[id]):
+		return
+	# They must really be standing by it.
+	if peers[who]["pos"].distance_to(main.bouncies[id].global_position) > 4.0:
+		return
+	main.bouncy_used(id, who)
+
+
+# Unholy Mending: a demon's health back to full.
+func heal_player(id: int) -> void:
+	if not peers.has(id) or peers[id]["role"] != "demon":
+		return
+	peers[id]["hp"] = 1.0
+	print("[host] %s healed up" % peers[id]["name"])
+	if id == 1:
+		main.online_you_hit(1.0)
+		main.player.powerup_taken.emit("heal")
+	else:
+		s_you_hit.rpc_id(id, 1.0)
+		s_healed.rpc_id(id)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_healed() -> void:
+	main.player.powerup_taken.emit("heal")
 
 
 func burn_player(id: int, seconds: float) -> void:
@@ -1726,6 +1759,22 @@ func send_fx(kind: String, args: Array, except_id: int) -> void:
 	for id in _client_ids():
 		if id != except_id and peers[id]["in_round"]:
 			s_fx.rpc_id(id, kind, args)
+
+
+func send_fx_team(team: String, kind: String, args: Array) -> void:
+	for id in _client_ids():
+		if peers[id]["in_round"] and peers[id]["role"] == team:
+			s_fx.rpc_id(id, kind, args)
+
+
+# Someone just switched sides: show them their new team's power-ups.
+func _show_team_powerups(id: int) -> void:
+	var team: String = peers[id]["role"]
+	for it in main.powerups.lying_around(team):
+		if id == 1:
+			main.fx("powerup", it)
+		else:
+			s_fx.rpc_id(id, "powerup", it)
 
 
 @rpc("authority", "call_remote", "reliable")

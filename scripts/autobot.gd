@@ -163,11 +163,17 @@ func _play_demon(delta: float, p) -> void:
 				if d < best and d < 9.0:
 					best = d
 					_possess_target = prop
-	if _possess_target and is_instance_valid(_possess_target) and _possess_tries < 2.5:
+	if _possess_target and is_instance_valid(_possess_target) and _possess_tries < 5.0:
 		_possess_tries += delta
 		if not p.first_person["demon"]:
 			p.toggle_view()   # line it up through the eyes, not over the shoulder
 		_aim(p, _possess_target.global_position + Vector3.UP * 0.2)
+		# Walk up to it first (possessing only works from close by).
+		var gap: float = _possess_target.global_position.distance_to(p.global_position)
+		p.test_input = {"dir": Vector2(0, -1)} if gap > 2.5 else {}
+		# (Close enough: a bot's aim is perfect. The host still checks it all.)
+		if gap <= 3.0:
+			p._set_hover(_possess_target)
 		if p._hover_prop == _possess_target and p.use_skill(0):
 			_hidden = true
 			log_line("possessing a real " + _possess_target.get_meta("prop_type"))

@@ -19,8 +19,11 @@ const Fire = preload("res://scripts/fire.gd")
 const Minion = preload("res://scripts/minion.gd")
 const PowerUps = preload("res://scripts/powerups.gd")
 const Keybinds = preload("res://scripts/keybinds.gd")
+const Bouncy = preload("res://scripts/bouncy.gd")
 const Shrine = preload("res://scripts/shrine.gd")
 const SHRINE_POS := Vector3(-20, 0, 4)   # the one shrine on this map
+const BOUNCIES := [Vector3(8, 0, 3.4), Vector3(14, 0, -9.6), Vector3(-10, 0, -2.2)]   # by the hut, the tower, the long house
+const ONE_USE_BOUNCIES := [Vector3(0, 0, -14), Vector3(-18, 0, 15), Vector3(21, 0, 2)]
 const Vortex = preload("res://scripts/vortex.gd")
 const Projectile = preload("res://scripts/projectile.gd")
 const Updater = preload("res://scripts/updater.gd")
@@ -74,6 +77,7 @@ var _cherub_counter := 0
 var fires := {}              # fire id -> Fire node (everyone; angels check if they're standing in one)
 var _fire_counter := 0
 var powerups                 # power-up drops and pickups (powerups.gd)
+var bouncies := {}            # one-use bouncy id -> node (this round)
 var _auth_fires := {}        # decider: fire id -> {owner, pos, lit_at, until} (who earns Hatred from it)
 var _naughty_tick := 0.0
 var _cherub_check := 0.0
@@ -195,6 +199,7 @@ func _ready() -> void:
 	player.form_changed.connect(func(): _play("possess"))
 	player.hit_confirmed.connect(_on_hit_confirmed)
 	player.taunted.connect(_on_taunted)
+	player.bounced.connect(func(): _play("bounce"))
 	player.powerup_taken.connect(func(kind):
 		_play("powerup")
 		_toast(PowerUps.LABELS.get(kind, kind) + "!", 1.5))
@@ -572,6 +577,15 @@ func _build_map() -> void:
 	add_child(shrine)
 	shrine.position = SHRINE_POS
 	structures.append([Vector2(SHRINE_POS.x, SHRINE_POS.z), 3.0])
+	# Bouncies that are always there (one-use ones come back every round)
+	for i in BOUNCIES.size():
+		var b := Bouncy.new()
+		b.bouncy_id = 1000 + i
+		add_child(b)
+		b.position = BOUNCIES[i]
+		structures.append([Vector2(BOUNCIES[i].x, BOUNCIES[i].z), 1.6])
+	for spot in ONE_USE_BOUNCIES:
+		structures.append([Vector2(spot.x, spot.z), 1.6])
 	# A raised platform with a ramp up to it
 	_add_block(Vector3(-6, 1, 12), Vector3(8, 2, 4), Color(0.6, 0.6, 0.55))
 	_add_block(Vector3(-6, 0.8, 7.3), Vector3(2.5, 0.4, 5.9), Color(0.5, 0.45, 0.4), Vector3(-0.35, 0, 0))   # top edge flush with the platform
@@ -647,6 +661,15 @@ func _reset_round_props(seed_value: int) -> void:
 	fires.clear()
 	_possessions.clear()
 	rng.seed = seed_value
+	bouncies.clear()
+	for i in ONE_USE_BOUNCIES.size():
+		var b := Bouncy.new()
+		b.bouncy_id = i
+		b.one_use = true
+		b.on_used = _on_bouncy_used
+		round_root.add_child(b)
+		b.position = ONE_USE_BOUNCIES[i]
+		bouncies[i] = b
 	var types := PropLib.type_names()
 	for i in PROP_COUNT:
 		_spawn_prop(types[rng.randi() % types.size()], _random_spot())
@@ -1387,6 +1410,7 @@ func online_affected(target: Vector3, hatred_drain: float, lockout: float, label
 func online_you_were_caught(pos: Vector3, by_name := "") -> void:
 	role = "angel"
 	player.set_role("angel")
+	powerups.forget_other_team("angel")
 	player.velocity = Vector3.ZERO
 	player.global_position = pos
 	player.rotation.y = PI
@@ -1780,6 +1804,23 @@ func _now() -> float:
 # Demons earn a little Hatred for being naughty: angels roasting in their fire,
 # their minion fooling an angel, taunting right under an angel's nose.
 # The decider (host / practice game) hands it out.
+# ---- One-use bouncies ----
+
+# Our own player used one up: the decider tells everyone it's gone.
+func _on_bouncy_used(id: int) -> void:
+	if is_authority():
+		bouncy_used(id, -1)
+	elif net:
+		net.c_bouncy_used.rpc_id(1, id)
+
+
+# Decider: a one-use bouncy was used (by this player, or the decider's own).
+func bouncy_used(id: int, _by_key: int) -> void:
+	if not bouncies.has(id) or not is_instance_valid(bouncies[id]):
+		return
+	broadcast_fx("bouncy_gone", [id])
+
+
 # ---- Power-ups (the drops are in powerups.gd) ----
 
 # Everyone the decider can see: [key, body, team]. (Practice: you, and the test demons.)
@@ -1810,6 +1851,10 @@ func give_powerup(user_key: int, kind: String, where: Vector3) -> void:
 					net.burn_player(e[0], Skills.FIRE_LINGER * 2.0)
 		if burned > 0:
 			award_hatred(user_key, Skills.NAUGHTY_FIRE_PER_SEC * burned, "your fire burst caught an angel")
+		return
+	if kind == "heal":
+		if mode == "online" and net:
+			net.heal_player(user_key)
 		return
 	if mode == "practice":
 		player.apply_powerup(kind)
@@ -1980,6 +2025,14 @@ func fx_parent() -> Node:
 	return _fx_parent()
 
 
+# An effect only one team may see (their power-ups).
+func team_fx(team: String, kind: String, args: Array) -> void:
+	if role == team:
+		fx(kind, args)
+	if net and net.is_host:
+		net.send_fx_team(team, kind, args)
+
+
 func puff_at(pos: Vector3, color: Color, size: float) -> void:
 	Effects.puff(_fx_parent(), pos, color, size)
 
@@ -1989,6 +2042,11 @@ func fx(kind: String, args: Array) -> void:
 		"teleport":
 			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.8, Color(0.15, 0.02, 0.05, 0.85), 1.8)
 			Effects.puff(_fx_parent(), args[1] + Vector3.UP * 0.5, Color(0.15, 0.02, 0.05, 0.6), 0.9)
+		"bouncy_gone":
+			if bouncies.has(args[0]) and is_instance_valid(bouncies[args[0]]):
+				Effects.puff(_fx_parent(), bouncies[args[0]].global_position + Vector3.UP * 0.4, Color(1.0, 0.85, 0.4, 0.8), 1.0)
+				bouncies[args[0]].use_up()
+			bouncies.erase(args[0])
 		"powerup":
 			powerups.show_item(args[0], args[1], args[2])
 		"powerup_gone":
@@ -2506,6 +2564,7 @@ func _build_sounds() -> void:
 		"possess": Sfx.possess_sound(),
 		# Cherub Sense alarm: the cherub's little horn fanfare.
 		"sense": Sfx.voice([[784, 784, 0.09, 1.0, 0.02], [988, 988, 0.09, 1.0, 0.02], [1175, 1175, 0.22, 1.0, 0.0]], 0.24, 0.0, 0.03, 0.03),
+		"bounce": Sfx.voice([[180, 520, 0.16, 0.9, 0.0], [520, 380, 0.12, 0.5, 0.0]], 0.18, 0.0, 0.02, 0.02),
 		"powerup": Sfx.voice([[660, 990, 0.12, 0.8, 0.0], [990, 1320, 0.18, 0.7, 0.0]], 0.2, 0.0, 0.02, 0.02),
 	}
 	for kind in Blessings.names():

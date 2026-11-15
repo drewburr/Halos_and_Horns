@@ -3,7 +3,7 @@
 A free, non-commercial prop-hunt game: demons possess everyday objects to hide, angels hunt them down.
 Passion project, inspired by Witch It.
 
-## Status: version 0.5.0, power-ups
+## Status: version 0.5.1, bouncies
 
 One small test map, placeholder shapes for everything.
 
@@ -12,8 +12,9 @@ One small test map, placeholder shapes for everything.
 - **Skills:** pick 2 per side on the main menu or in the lobby. Angels: Flying Dash (dash where you look or the way your keys point, up into the air too; you keep the momentum until you turn: wide turns cost a little, a quick 180 or a strafe kills it), Alarm Cherub (thrown), Vacuum Orb, Holy Leap (steer it in the air; press its key again mid-air to Cloud Stomp), Holy Scripture (a heavy book, big holy damage), Holy Kick (boot a demon away). Demons: Possess, Fly, Invisibility (6.5 s, angels get no trace of you), Teleport (to your crosshair, up to 20 m; expensive), Minion (a decoy that quietly appears where you aim, looking like you, or like some prop from the map if you're disguised; hold its key to steer it to the ground under your crosshair; it moves like a real player, hits on it look and sound real, but it pops after a hit or two), Hellfire (costs Hatred; angels in the fire are slowed and their blessings burn away).
 - **Demons** can **transform** into a copy of any prop (click), or with skills **become** the real one (Possess) and **fly** (hold the key: you rise while Hatred lasts, gravity brings you down; no fall damage).
 - The Alarm Cherub just hovers there tooting its little horn until a demon comes close; then it blasts the horn and shows its detection bubble. Shoot it with a blessing to send it flying down a hallway.
-- **Power-ups:** angels drop demon power-ups as they go (more often with more players and the more the demons move about): Hatred Surge, Fire Burst. Every redeemed demon drops an angel power-up, and an angel who hasn't found or hit anyone for 30 s gets one dropped nearby: Cherub Sense (you go off like a cherub near demons), Quick Blessings, Quick Skills, Endless Sprint.
+- **Power-ups:** angels drop demon power-ups as they go (more often with more players and the more the demons move about): Hatred Surge, Fire Burst, Unholy Mending (back to full health). Each team only ever sees its own team's power-ups. Every redeemed demon drops an angel power-up, and an angel who hasn't found or hit anyone for 30 s gets one dropped nearby: Cherub Sense (you go off like a cherub near demons), Quick Blessings, Quick Skills, Endless Sprint.
 - **Naughtiness pays:** demons earn Hatred when angels roast in their fire, when their minion soaks a hit, and for taunting right under an angel's nose.
+- **Bouncies:** springy pads that fling anyone about 8 m up. Blue ones are part of the map; gold ones work once per round.
 - **Ledge grab:** angels in the air who push into a wall whose top they could reach pull themselves up onto it.
 - **Controls screen:** every action can be rebound to any key or mouse button (main menu or Esc menu).
 - **The shrine:** one per map (the stone dais with the floating half-gold, half-red crystal and a SHRINE sign), the only place to swap skills mid-round. Press G there; a swap takes 3 seconds in total, you can't move while at it, demons have to leave their prop first, and the shrine flares up so everyone knows someone is there. Fresh skills start on cooldown.

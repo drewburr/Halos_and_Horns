@@ -592,6 +592,45 @@ func _run() -> void:
 	check(pu._auth.values().any(func(it): return it["team"] == "demon"), "angels drop demon power-ups as time goes by")
 	pu.reset()
 
+	# Power-ups only show for their own team.
+	pu.reset()
+	pu._drop("demon", "heal", Vector3(0, 0, 20))
+	pu._drop("angel", "quick_run", Vector3(2, 0, 20))
+	await frames(2)
+	var shown_kinds: Array = pu.items.values().map(func(n): return n.get_meta("kind"))
+	check(shown_kinds == ["quick_run"], "an angel only sees angel power-ups (sees %s)" % [shown_kinds])
+	pu.reset()
+
+	# Bouncies: step on one and you're flung high.
+	player.global_position = main.BOUNCIES[0] + Vector3(0, 0.1, -2.0)
+	player.velocity = Vector3.ZERO
+	player.rotation = Vector3.ZERO
+	player.pivot.rotation = Vector3.ZERO
+	await frames(10)
+	player.test_input = {"dir": Vector2(0, 1)}    # walk onto it
+	var peak_b := 0.0
+	for k in 90:
+		await frames(1)
+		peak_b = maxf(peak_b, player.global_position.y)
+		if peak_b > 1.0:
+			player.test_input = {}
+	player.test_input = {}
+	check(peak_b > 6.0, "a bouncy flings you way up (%.1f m)" % peak_b)
+	await frames(60)
+	# One-use bouncies: the first bounce uses it up for the round.
+	var one: Node3D = main.bouncies.get(0)
+	check(one != null, "one-use bouncies are out each round")
+	if one:
+		player.global_position = one.global_position + Vector3(0, 0.6, 0)
+		player.velocity = Vector3.ZERO
+		await frames(10)
+		check(player.velocity.y > 3.0 or player.global_position.y > 2.0, "...it bounces you")
+		await frames(10)
+		check(not main.bouncies.has(0), "...once: then it's gone")
+	player.global_position = Vector3(0, 0.1, 18)
+	player.velocity = Vector3.ZERO
+	await frames(120)
+
 	# Ledge grab: in the air beside a roof edge your hands can reach, you pull yourself up.
 	player.rotation = Vector3.ZERO
 	player.pivot.rotation = Vector3.ZERO

@@ -9,17 +9,19 @@
 # demon for a while, one turns up near an angel.
 #
 # Only the decider (host / practice game) creates them and decides who picked one
-# up. Everyone sees them (the "powerup" / "powerup_gone" effects).
+# up. Each team only ever SEES its own team's power-ups (the other team's game
+# isn't even told where they are), so nobody can camp the other side's drops.
 extends Node
 
 const Skills = preload("res://scripts/skills.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 
 const ANGEL_KINDS := ["sense", "quick_throw", "quick_skills", "quick_run"]
-const DEMON_KINDS := ["fast_hatred", "fire_burst"]
+const DEMON_KINDS := ["fast_hatred", "fire_burst", "heal", "heal"]   # (healing turns up twice as often)
 const LABELS := {
 	"sense": "Cherub Sense", "quick_throw": "Quick Blessings", "quick_skills": "Quick Skills",
 	"quick_run": "Endless Sprint", "fast_hatred": "Hatred Surge", "fire_burst": "Fire Burst",
+	"heal": "Unholy Mending",
 }
 const DURATION := {"sense": 15.0, "quick_throw": 12.0, "quick_skills": 15.0, "quick_run": 15.0, "fast_hatred": 15.0}
 
@@ -123,6 +125,28 @@ func decider_tick(delta: float) -> void:
 				break
 
 
+# Decider: the power-ups lying around for one team (to show someone who just joined it).
+func lying_around(team: String) -> Array:
+	var out := []
+	for id in _auth:
+		if _auth[id]["team"] == team:
+			out.append([id, _auth[id]["kind"], _auth[id]["pos"]])
+	return out
+
+
+static func team_of(kind: String) -> String:
+	return "angel" if kind in ANGEL_KINDS else "demon"
+
+
+# Everyone: we switched sides, so stop showing the other side's power-ups.
+func forget_other_team(my_team: String) -> void:
+	for id in items.keys():
+		var n = items[id]
+		if is_instance_valid(n) and team_of(n.get_meta("kind")) != my_team:
+			n.queue_free()
+			items.erase(id)
+
+
 func _count(team: String) -> int:
 	return _auth.values().filter(func(it): return it["team"] == team).size()
 
@@ -131,7 +155,7 @@ func _drop(team: String, kind: String, near: Vector3) -> void:
 	_counter += 1
 	var pos: Vector3 = main.ground_below(near + Vector3.UP * 1.5) + Vector3.UP * 0.9
 	_auth[_counter] = {"kind": kind, "team": team, "pos": pos, "until": _now() + LIFETIME}
-	main.broadcast_fx("powerup", [_counter, kind, pos])
+	main.team_fx(team, "powerup", [_counter, kind, pos])
 	print("[decider] %s power-up dropped: %s" % [team, kind])
 
 
@@ -145,7 +169,7 @@ func _remove(id: int, taken: bool) -> void:
 func show_item(id: int, kind: String, pos: Vector3) -> void:
 	var n := Node3D.new()
 	var angel := kind in ANGEL_KINDS
-	var color := Color(1.0, 0.88, 0.35) if angel else Color(0.9, 0.15, 0.1)
+	var color := Color(1.0, 0.88, 0.35) if angel else (Color(0.3, 0.9, 0.35) if kind == "heal" else Color(0.9, 0.15, 0.1))
 	var gem := MeshInstance3D.new()
 	var s := SphereMesh.new()
 	s.radius = 0.28
@@ -175,6 +199,7 @@ func show_item(id: int, kind: String, pos: Vector3) -> void:
 	tag.position.y = 0.6
 	n.add_child(tag)
 	n.set_meta("t", randf() * 10.0)
+	n.set_meta("kind", kind)
 	main.fx_parent().add_child(n)
 	n.global_position = pos
 	n.set_meta("base_y", pos.y)

@@ -47,6 +47,11 @@ func _ready() -> void:
 	speed = PropLib.speed(form)
 
 
+func bounce(up_speed: float) -> bool:
+	velocity.y = up_speed
+	return true
+
+
 func walk_to(point: Vector3) -> void:
 	target = point
 	_has_target = true
