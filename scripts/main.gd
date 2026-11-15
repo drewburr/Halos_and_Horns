@@ -857,7 +857,6 @@ func _build_menu() -> void:
 func _refresh_update_row() -> void:
 	update_button.text = updater.button_text
 	update_button.visible = updater.state != "idle"
-	update_button.disabled = updater.state in ["downloading", "restarting"]
 	update_note.text = updater.note
 	update_note.visible = updater.note != ""
 

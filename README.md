@@ -45,7 +45,9 @@ Windows and Linux players can play together.
 
 ## Updating
 
-When a newer version is out, the main menu shows an **Update to version ...** button. Click it and the game downloads the new version, replaces itself and restarts. If that can't work (for example the game sits in a folder it isn't allowed to change), the button opens the download page instead.
+When a newer version is out, the main menu shows a **Version ... is out** button. It opens the download page in your browser; download the new file there and replace your old one with it.
+
+The game only checks whether a newer version exists. It never downloads, replaces or runs anything by itself. (Versions 0.4 to 0.5.2 installed updates themselves; that was taken out because the only check on a download was a fingerprint that came from the same place as the file. It may come back once releases are signed with a key that never leaves the developer's computer.)
 
 Making a release (developers): publish a GitHub release tagged like `v0.4.1`. The tag is the version: the build stamps it into the game, so there is no version number to change in the source. Run from source, the game calls itself version "dev".
 
@@ -99,7 +101,7 @@ The host is the referee. It decides every hit (other players' throws are only vi
 - `godot --headless -s res://tests/test_gameplay.gd`: practice mode, movement, stamina, taunts.
 - `godot --headless -s res://tests/test_skills.gd`: flying, possess vs transform, per-form health and speed, every angel tool.
 - `GODOT=godot tests/test_multiplayer.sh`: plays a whole 5-player online match with bots, including a cheater, and checks the results and that no names leak.
-- `GODOT=godot tests/test_updater.sh`: exports two builds and checks the older one updates itself to the newer one and restarts (Linux only).
+- `GODOT=godot tests/test_updater.sh`: exports a build and checks it notices a newer version and offers the download page, without ever downloading or touching a file (Linux only).
 
 ## License
 

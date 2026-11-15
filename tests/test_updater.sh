@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Automated test of the built-in updater (scripts/updater.gd), Linux only.
-# Exports two real builds of the game, stamped as versions 1.0.0 and 99.0.0
-# the way the release workflow stamps them, serves the newer one from a stand-in for GitHub on this
-# computer, and checks that the current build:
-#   1. refuses a download that doesn't match the listed checksum, and
-#   2. otherwise replaces itself with the newer build and restarts into it.
-# Needs Godot with its Linux export template installed, and python3.
+# Automated test of the new-version notice (scripts/updater.gd), Linux only.
+# Exports a real build stamped as version 1.0.0 (the way the release workflow
+# stamps them), points it at a stand-in for GitHub on this computer that lists a
+# newer release, and checks that the game:
+#   1. notices the newer version and offers the download page,
+#   2. never downloads or touches any file, even when the release lists a download,
+#   3. stays quiet when there's nothing newer.
+# Needs Godot with its Linux debug export template installed, and python3.
 # Usage: GODOT=/path/to/godot tests/test_updater.sh
 set -u
 GODOT="${GODOT:-godot}"
@@ -28,56 +29,40 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Export a copy of the project as the given version.
-build() {   # build <name> <version>
-	mkdir -p "$OUT/src-$1" "$OUT/$1"
-	(cd "$ROOT" && git ls-files -co --exclude-standard -z | xargs -0 cp --parents -t "$OUT/src-$1")
-	sed -i "s|^config/version=.*|config/version=\"$2\"|" "$OUT/src-$1/project.godot"
-	"$GODOT" --headless --path "$OUT/src-$1" --export-debug Linux "$OUT/$1/$FILE" > "$OUT/$1.export.log" 2>&1
-	chmod +x "$OUT/$1/$FILE" 2>/dev/null
-	test -s "$OUT/$1/$FILE"
-}
+echo "Exporting a build (this takes a minute)..."
+mkdir -p "$OUT/src" "$OUT/install" "$OUT/serve"
+(cd "$ROOT" && git ls-files -co --exclude-standard -z | xargs -0 cp --parents -t "$OUT/src")
+sed -i 's|^config/version=.*|config/version="1.0.0"|' "$OUT/src/project.godot"
+"$GODOT" --headless --path "$OUT/src" --export-debug Linux "$GAME" > "$OUT/export.log" 2>&1
+chmod +x "$GAME" 2>/dev/null
+check "the game exports" test -s "$GAME"
+BEFORE="$(sha256sum "$GAME" | cut -d' ' -f1)"
 
-# What GitHub's "latest release" answer looks like, as far as the updater reads it.
-release() {   # release <sha256 to list>
-	cat > "$OUT/serve/latest.json" <<-EOF
-	{"tag_name": "v99.0.0", "assets": [{"name": "$FILE",
-	  "browser_download_url": "http://127.0.0.1:$PORT/$FILE",
-	  "size": $(stat -c %s "$OUT/serve/$FILE"), "digest": "sha256:$1"}]}
-	EOF
-}
-
-sha() { sha256sum "$1" | cut -d' ' -f1; }
-
-echo "Exporting two builds (this takes a minute)..."
-check "the current version exports" build install "1.0.0"
-check "a newer version exports" build serve "99.0.0"
-OLD="$(sha "$GAME")"
-NEW="$(sha "$OUT/serve/$FILE")"
-check "the two builds differ" test "$OLD" != "$NEW"
-
+echo "not a game" > "$OUT/serve/$FILE"
 (cd "$OUT/serve" && exec python3 -m http.server "$PORT" --bind 127.0.0.1) > "$OUT/server.log" 2>&1 &
 SERVER=$!
 sleep 1
-ARGS=(--headless -- "--update-api=http://127.0.0.1:$PORT/latest.json" --update-auto)
+release() {   # release <tag>
+	cat > "$OUT/serve/latest.json" <<-EOF2
+	{"tag_name": "$1", "assets": [{"name": "$FILE", "browser_download_url": "http://127.0.0.1:$PORT/$FILE", "size": 11}]}
+	EOF2
+}
+ARGS=(--headless --quit-after 300 -- "--update-api=http://127.0.0.1:$PORT/latest.json" --update-click)
 
-# 1. A download that doesn't match its checksum is thrown away.
-release "$(printf '0%.0s' {1..64})"
-timeout 20 "$GAME" "${ARGS[@]}" > "$OUT/bad.log" 2>&1
-check "a damaged download is refused" grep -q "updater\] failed: The downloaded file was damaged" "$OUT/bad.log"
-check "...and the game file is untouched" test "$(sha "$GAME")" = "$OLD"
-check "...with nothing left behind" test ! -e "$GAME.new" -a ! -e "$GAME.old"
+# 1 + 2. A newer release: offered, the button opens the page, nothing is downloaded.
+release "v99.0.0"
+timeout 30 "$GAME" "${ARGS[@]}" > "$OUT/newer.log" 2>&1
+check "a newer version is noticed" grep -q "updater\] version 99.0.0 is available" "$OUT/newer.log"
+check "...and the button opens the download page" grep -q "updater\] opening the download page" "$OUT/newer.log"
+check "...without downloading anything" bash -c "! grep -q 'GET /$FILE' '$OUT/server.log'"
+check "...or touching the game file" test "$(sha256sum "$GAME" | cut -d' ' -f1)" = "$BEFORE"
+check "...or leaving anything next to it" test "$(ls "$OUT/install" | wc -l)" -eq 1
 
-# 2. A good download replaces the game, which restarts as the new version.
-release "$NEW"
-timeout 60 "$GAME" "${ARGS[@]}" > "$OUT/good.log" 2>&1
-check "the old game quits by itself after updating" test $? -eq 0
-check "the game file is now the new version" test "$(sha "$GAME")" = "$NEW"
-check "...and can still be run" test -x "$GAME"
-sleep 3
-check "the new version is running" pgrep -f "$OUT/install/"
-check "...and has removed the old file" test ! -e "$GAME.old"
-check "...and doesn't offer the update again" test "$(grep -c 'is available' "$OUT/good.log")" -eq 1
+# 3. Nothing newer: nothing offered.
+release "v1.0.0"
+timeout 30 "$GAME" "${ARGS[@]}" > "$OUT/same.log" 2>&1
+check "the same version isn't offered" bash -c "! grep -q 'is available' '$OUT/same.log'"
+check "no script errors" bash -c "! grep -q 'SCRIPT ERROR' '$OUT'/*.log"
 
 echo
 if [ "$failures" -eq 0 ]; then
