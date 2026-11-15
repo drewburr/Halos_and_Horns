@@ -447,16 +447,16 @@ func _run() -> void:
 	check(main.mode == "menu" and not ed.active() and main.round_root == null and main.MAP_HALF == 28.0 and main.player.camera.current, "...leaving goes back to the menu and the Playground (%s %s %s)" % [main.mode, ed.active(), main.MAP_HALF])
 	DirAccess.remove_absolute(saved_path)
 
-	# Banned names (spacing, l33t, look-alike letters...) are refused; normal names aren't.
+	# A couple of names get swapped for a better one; everything else is left alone.
 	var N = load("res://scripts/net_game.gd")
-	var blocked := true
-	for n in ["Dick Bubble", "D1ck Bubbl3", "d i c k b u b b l e", "Diiick Buuubble", "xXDickBubbleXx", "DickBBLs", "DІck Bubble", "DičKьŭБBle", "Dícк Bùbblé", "Dick\u200bBubble", "ＤｉｃｋＢｕｂｂｌｅ"]:
-		blocked = blocked and not N.name_ok(n)
-	check(blocked, "banned names are refused, however they're spelled")
-	var allowed := true
-	for n in ["Theo", "Dickens", "Bubbles", "Big Bubble", "Benedict", "Bubba", "Müller", "Šárka"]:
-		allowed = allowed and N.name_ok(n)
-	check(allowed, "...but normal names are fine")
+	var swapped := true
+	for n in ["Dick Bubble", "xXDickBubbleXx", "dick bbl"]:
+		swapped = swapped and N.better_name(n) in N.BETTER_NAMES
+	check(swapped, "the swapped names get a better one")
+	var kept := true
+	for n in ["Theo", "Dickens", "Bubbles", "Big Bubble", "Benedict", "Müller", "Šárka"]:
+		kept = kept and N.better_name(n) == n and N.displayable_name(n) == n
+	check(kept, "...normal names are left alone")
 
 	print("\n%s: %d failure(s)" % ["ALL PASSED" if failures == 0 else "FAILED", failures])
 	quit(1 if failures else 0)

@@ -1226,9 +1226,6 @@ func _make_net() -> void:
 
 
 func _on_host_pressed() -> void:
-	if not NetGame.name_ok(name_edit.text):
-		menu_status.text = NetGame.NOPE
-		return
 	_save_settings()
 	_make_net()
 	var err: Error = net.host(_port(), name_edit.text)
@@ -1247,9 +1244,6 @@ func _on_join_pressed() -> void:
 	var address := address_edit.text.strip_edges()
 	if address == "":
 		menu_status.text = "Type the host's address first."
-		return
-	if not NetGame.name_ok(name_edit.text):
-		menu_status.text = NetGame.NOPE
 		return
 	_save_settings()
 	_make_net()

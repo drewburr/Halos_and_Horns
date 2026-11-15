@@ -116,7 +116,7 @@ func _new_record(player_name: String) -> Dictionary:
 
 
 func _clean_name(n: String) -> String:
-	n = displayable_name(n).substr(0, 16)
+	n = better_name(displayable_name(n)).substr(0, 16)
 	if n == "":
 		n = "Player"
 	var taken := []
@@ -130,60 +130,31 @@ func _clean_name(n: String) -> String:
 	return n
 
 
-# Some names just aren't allowed (ported from Slayer_Next_Gen, then toughened up:
-# spacing, punctuation, l33t numbers, look-alike letters and stretched-out
-# letters all still count).
-const db := ["DICK BUBBLE", "DICK BBL"]
-# Every accented Latin letter and every foreign look-alike, and the plain letter it reads as.
-const _FOLD_FROM := "ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåçèéêëìíîïðñòóôõöøùúûüýþÿĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽžſƀƁƂƃƄƅƠơƯưǍǎǏǐǑǒǓǔǕǖǗǘǙǚǛǜǞǟǠǡǦǧǨǩǪǫǬǭǰǴǵǸǹǺǻȀȁȂȃȄȅȆȇȈȉȊȋȌȍȎȏȐȑȒȓȔȕȖȗȘșȚțȞȟȦȧȨȩȪȫȬȭȮȯȰȱȲȳḀḁḂḃḄḅḆḇḈḉḊḋḌḍḎḏḐḑḒḓḔḕḖḗḘḙḚḛḜḝḞḟḠḡḢḣḤḥḦḧḨḩḪḫḬḭḮḯḰḱḲḳḴḵḶḷḸḹḺḻḼḽḾḿṀṁṂṃṄṅṆṇṈṉṊṋṌṍṎṏṐṑṒṓṔṕṖṗṘṙṚṛṜṝṞṟṠṡṢṣṤṥṦṧṨṩṪṫṬṭṮṯṰṱṲṳṴṵṶṷṸṹṺṻṼṽṾṿẀẁẂẃẄẅẆẇẈẉẊẋẌẍẎẏẐẑẒẓẔẕẖẗẘẙẛẠạẢảẤấẦầẨẩẪẫẬậẮắẰằẲẳẴẵẶặẸẹẺẻẼẽẾếỀềỂểỄễỆệỈỉỊịỌọỎỏỐốỒồỔổỖỗỘộỚớỜờỞởỠỡỢợỤụỦủỨứỪừỬửỮữỰựỲỳỴỵỶỷỸỹАаВвБбЬьЪъЫыСсЕеЁёКкҚқЌќМмНнОоРрТтХхУуІіЇїЈјЅѕДдЦцЧЛлӀӏΑαΒβΕεΙιΚκΜΝΟοΡρΤΧχΥυϹϲᏟℂⅮⅾⅠⅰℓ"
-const _FOLD_TO := "AAAAAACEEEEIIIIDNOOOOOOUUUUYPSAAAAAACEEEEIIIIDNOOOOOOUUUUYPYAAAAAACCCCCCCCDDDDEEEEEEEEEEGGGGGGGGHHHHIIIIIIIIIIJJKKLLLLLLLLNNNNNNOOOOOORRRRRRSSSSSSSSTTTTTTUUUUUUUUUUUUWWYYYZZZZZZSBBBBBBOOUUAAIIOOUUUUUUUUUUAAAAGGKKOOOOJGGNNAAAAAAEEEEIIIIOOOORRRRUUUUSSTTHHAAEEOOOOOOOOYYAABBBBBBCCDDDDDDDDDDEEEEEEEEEEFFGGHHHHHHHHHHIIIIKKKKKKLLLLLLLLMMMMMMNNNNNNNNOOOOOOOOPPPPRRRRRRRRSSSSSSSSSSTTTTTTTTUUUUUUUUUUVVVVWWWWWWWWWWXXXXYYZZZZZZHTWYSAAAAAAAAAAAAAAAAAAAAAAAAEEEEEEEEEEEEEEEEIIIIOOOOOOOOOOOOOOOOOOOOOOOOUUUUUUUUUUUUUUYYYYYYYYAABBBBBBBBBBCCEEEEKKKKKKMMHHOOPPTTXXYYIIIIJJSSDDUU4LLIIAABBEEIIKKMNOOPPTXXYUCCCCDDIIL"
-# Letters with accents are fine in names (Anium, pN...); other alphabets are dropped.
-const _NAME_EXTRA := "ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåçèéêëìíîïðñòóôõöøùúûüýþÿĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĴĵĶķĹĺĻļĽľŁłŃńŅņŇňŌōŎŏŐőŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽžſƀƁƂƃƄƅƠơƯưǍǎǏǐǑǒǓǔǕǖǗǘǙǚǛǜǞǟǠǡǦǧǨǩǪǫǬǭǰǴǵǸǹǺǻȀȁȂȃȄȅȆȇȈȉȊȋȌȍȎȏȐȑȒȓȔȕȖȗȘșȚțȞȟȦȧȨȩȪȫȬȭȮȯȰȱȲȳḀḁḂḃḄḅḆḇḈḉḊḋḌḍḎḏḐḑḒḓḔḕḖḗḘḙḚḛḜḝḞḟḠḡḢḣḤḥḦḧḨḩḪḫḬḭḮḯḰḱḲḳḴḵḶḷḸḹḺḻḼḽḾḿṀṁṂṃṄṅṆṇṈṉṊṋṌṍṎṏṐṑṒṓṔṕṖṗṘṙṚṛṜṝṞṟṠṡṢṣṤṥṦṧṨṩṪṫṬṭṮṯṰṱṲṳṴṵṶṷṸṹṺṻṼṽṾṿẀẁẂẃẄẅẆẇẈẉẊẋẌẍẎẏẐẑẒẓẔẕẖẗẘẙẛẠạẢảẤấẦầẨẩẪẫẬậẮắẰằẲẳẴẵẶặẸẹẺẻẼẽẾếỀềỂểỄễỆệỈỉỊịỌọỎỏỐốỒồỔổỖỗỘộỚớỜờỞởỠỡỢợỤụỦủỨứỪừỬửỮữỰựỲỳỴỵỶỷỸỹ"
-const _LEET := {"0": "O", "1": "I", "!": "I", "|": "I", "3": "E", "4": "A", "@": "A",
-	"5": "S", "$": "S", "7": "T", "8": "B", "6": "G", "9": "G", "&": "B"}
+# A couple of names get swapped for a better one. That's all.
+const SWAP_NAMES := ["dickbubble", "dickbbl"]
+const BETTER_NAMES := ["William", "Bubba", "Nanopenis", "Buhtlicker"]
 
 
-# What a name reads as: plain capital letters, accents and look-alikes folded,
-# l33t numbers turned back into letters, stretched letters collapsed, everything else gone.
-static func name_reads_as(n: String) -> String:
-	var flat := ""
-	for ch in _narrow(n):
-		var i := _FOLD_FROM.find(ch)
-		if i >= 0:
-			ch = _FOLD_TO[i]
-		ch = _LEET.get(ch, ch.to_upper())
-		if ch >= "A" and ch <= "Z" and (flat == "" or flat[-1] != ch):
-			flat += ch
-	return flat
+static func better_name(n: String) -> String:
+	var letters := ""
+	for ch in n.to_lower():
+		if ch >= "a" and ch <= "z":
+			letters += ch
+	for bad in SWAP_NAMES:
+		if bad in letters:
+			return BETTER_NAMES.pick_random()
+	return n
 
 
-# Ｆｕｌｌｗｉｄｔｈ letters -> normal ones.
-static func _narrow(n: String) -> String:
+# Names show plain keyboard characters and accented Latin letters only
+# (no other alphabets or invisible characters).
+static func displayable_name(n: String) -> String:
 	var out := ""
 	for ch in n:
 		var c := ch.unicode_at(0)
-		out += char(c - 0xFEE0) if c >= 0xFF01 and c <= 0xFF5E else ch
-	return out
-
-
-static func name_ok(n: String) -> bool:
-	var re := RegEx.new()
-	re.compile("DI(CK|C|K)([UB]+L|BUB)")
-	return re.search(name_reads_as(n)) == null
-
-
-# Only plain keyboard characters and accented Latin letters survive in a shown name:
-# no other alphabets, invisible characters or stacked accent marks.
-static func displayable_name(n: String) -> String:
-	var out := ""
-	for ch in _narrow(n):
-		var c := ch.unicode_at(0)
-		if (c >= 32 and c < 127) or _NAME_EXTRA.find(ch) >= 0:
+		if (c >= 32 and c < 127) or (c >= 0xC0 and c <= 0x24F and c != 0xD7 and c != 0xF7) or (c >= 0x1E00 and c <= 0x1EFF):
 			out += ch
 	return out.strip_edges()
-
-
-const NOPE := "No, Bubba! Your NAME, buddy! The thing your mom yells across the yard. Try again!"
 
 
 func _new_eid() -> int:
@@ -200,12 +171,6 @@ func c_hello(player_name: String, version: int, angel_skills: Array, demon_skill
 	if not is_host:
 		return
 	var id := multiplayer.get_remote_sender_id()
-	if not name_ok(player_name) or not name_ok(displayable_name(player_name)):
-		s_kicked.rpc_id(id, NOPE)
-		get_tree().create_timer(0.5).timeout.connect(func():
-			if multiplayer.multiplayer_peer:
-				multiplayer.multiplayer_peer.disconnect_peer(id))
-		return
 	if version != main.game_build:
 		s_kicked.rpc_id(id, "Version mismatch: the host is running version %s. Download that version to join." % main.game_version)
 		get_tree().create_timer(0.5).timeout.connect(func():
