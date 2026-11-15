@@ -61,7 +61,11 @@ func _run() -> void:
 	check(get_nodes_in_group("prop").size() == 45, "45 props spawned")
 	check(player.frozen, "angel is frozen during the hiding period")
 	main.time_left = 0.0
-	await frames(3)
+	for i in 30:   # (a slow frame can delay the switch a tick or two)
+		await frames(1)
+		if main.state == main.State.HUNTING:
+			break
+	await frames(2)
 	check(main.state == main.State.HUNTING, "hunting starts after the hiding period")
 	check(not player.frozen, "angel can move once hunting starts")
 
