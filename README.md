@@ -61,7 +61,7 @@ Making a release (developers): publish a GitHub release tagged like `v0.4.1`. Th
 
 ## Playing from the source (developers)
 
-1. Download **Godot 4.3** (standard, *not* .NET): https://godotengine.org/download/archive/4.3-stable/
+1. Download **Godot 4.7.2** (standard, *not* .NET): https://godotengine.org/download/archive/4.7.2-stable/
 2. Open Godot, click **Import**, pick `project.godot`, press **F5**.
 3. To build the game yourself: Editor → Manage Export Templates → Download, then Project → Export → Windows or Linux. Either one can be built from either operating system.
 
