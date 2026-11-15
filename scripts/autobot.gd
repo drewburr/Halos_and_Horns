@@ -138,6 +138,7 @@ func _play_demon(delta: float, p) -> void:
 	if _hidden:
 		p.test_input = {}
 		_try_fire(p)
+		_try_fear(p)
 		_try_minion(p, delta)
 		_try_escape(p)
 		return
@@ -227,6 +228,19 @@ func _try_fire(p) -> void:
 			_aim(p, r.global_position + Vector3.UP * 0.2)
 			if p.use_skill(slot):
 				_log_once("fire")
+			return
+
+
+# Hidden demon with Fear: shriek once an angel comes close.
+func _try_fear(p) -> void:
+	var slot: int = p.loadout["demon"].find("fear")
+	if slot < 0 or main.state != main.State.HUNTING or _used.has("fear"):
+		return
+	for eid in main.net.remotes:
+		var r = main.net.remotes[eid]
+		if r.role == "angel" and r.visible and r.global_position.distance_to(p.global_position) < 9.0 and main._can_see(p, r):
+			if p.use_skill(slot):
+				_log_once("fear")
 			return
 
 

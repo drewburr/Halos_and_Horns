@@ -2,6 +2,7 @@
 # (possesses props). T toggles first/third person; each side remembers its view.
 extends CharacterBody3D
 
+signal scared          # a demon's Fear caught us
 signal hit_confirmed   # one of our throws hit a demon
 signal threw(kind)     # we threw a blessed projectile of this kind
 signal form_changed    # we possessed a prop or returned to demon form
@@ -138,9 +139,14 @@ var minion: Node3D = null     # our decoy, if we have one out (main creates it)
 var vanish_time := 0.0         # Invisibility: seconds left
 var pick_minion_form: Callable # main: a random prop type that's on the map right now
 var burning := 0.0            # seconds left standing in demon fire (main refreshes it)
+var feared := 0.0             # seconds left panicking from a demon's Fear
+var _fear_from := Vector3.ZERO
+var _fear_dir := Vector3.ZERO
+var _fear_turn := 0.0
 var _move_dir := Vector2.ZERO # last movement keys held (Holy Leap launches that way)
 var _leaping := false         # in the air from Holy Leap: strong steering, Cloud Stomp ready
 var _stomping := false
+var _leap_left := 0.0          # a stomp only counts this soon after the leap (the host allows 6 s)
 
 var shape_node: CollisionShape3D
 var visual_root: Node3D
@@ -199,6 +205,7 @@ func set_role(new_role: String) -> void:
 	clear_dash()
 	_pull_time = 0.0
 	burning = 0.0
+	feared = 0.0
 	vanish_time = 0.0
 	powerups.clear()
 	sense_alarm = false
@@ -363,6 +370,21 @@ func _physics_process(delta: float) -> void:
 		var tt := Time.get_ticks_msec() / 1000.0
 		var lurch := Vector2(1.3 * sin(tt * 2.1) + 0.6 * sin(tt * 7.3 + 1.3), 0.6 * sin(tt * 4.3 + 2.0))
 		input_dir = (input_dir + lurch).limit_length(1.0)
+	if feared > 0.0:
+		# Panicking: run off in a blind scatter, roughly away from the demon.
+		feared -= delta
+		_fear_turn -= delta
+		if _fear_turn <= 0.0 or _fear_dir == Vector3.ZERO:
+			var away := Vector3(global_position.x - _fear_from.x, 0.0, global_position.z - _fear_from.z)
+			if away.length() < 0.1:
+				away = Vector3.FORWARD.rotated(Vector3.UP, randf() * TAU)
+			_fear_dir = away.normalized().rotated(Vector3.UP, randf_range(-1.1, 1.1))
+			_fear_turn = randf_range(0.3, 0.7)
+		var local := move_basis().inverse() * _fear_dir
+		input_dir = Vector2(local.x, local.z).normalized()
+		want_run = true
+		want_jump = is_on_wall() and randf() < 0.1
+		sneaking = false
 	_move_dir = input_dir
 	_steer_minion()
 	_settle_view(delta, input_dir)
@@ -435,6 +457,7 @@ func _physics_process(delta: float) -> void:
 		_update_dash_momentum(delta, input_dir, on_floor)
 		velocity.x = current.x + _momentum.x
 		velocity.z = current.y + _momentum.y
+	_leap_left = maxf(_leap_left - delta, 0.0)
 	if _stomping:
 		clear_dash()
 		velocity = Vector3(0.0, -Skills.STOMP_SPEED, 0.0)
@@ -654,10 +677,10 @@ func dash_momentum() -> float:
 func use_skill(slot: int) -> bool:
 	var id: String = loadout[role][slot]
 	# Holy Leap's key again, mid-leap: Cloud Stomp (its cooldown is already running).
-	if id == "leap" and _leaping and not _stomping and not is_on_floor() and not frozen:
+	if id == "leap" and _leaping and not _stomping and not is_on_floor() and not frozen and _leap_left > 0.0:
 		_stomping = true
 		return true
-	if id == "" or frozen or skill_cd.get(id, 0.0) > 0.0 or Skills.SKILLS[id].get("hold", false):
+	if id == "" or frozen or feared > 0.0 or skill_cd.get(id, 0.0) > 0.0 or Skills.SKILLS[id].get("hold", false):
 		return false
 	if role == "demon" and skill_lock > 0.0:
 		return false
@@ -720,10 +743,11 @@ func use_skill(slot: int) -> bool:
 			velocity.x = flat.x
 			velocity.z = flat.z
 			_leaping = true
+			_leap_left = 5.5
 		"kick":
 			origin = pivot.global_position     # reach is measured from us, not the camera
 			Effects.swing(get_parent(), origin - Vector3.UP * 0.8, dir)
-		"fire":
+		"fire", "fear":
 			hatred -= Skills.hatred_cost(id)
 	skill_cd[id] = Skills.cooldown(id)
 	skill_used.emit(id, origin, dir, point, index)
@@ -731,7 +755,7 @@ func use_skill(slot: int) -> bool:
 
 
 func melee() -> bool:
-	if melee_cd > 0.0 or frozen or role != "angel":
+	if melee_cd > 0.0 or frozen or feared > 0.0 or role != "angel":
 		return false
 	melee_cd = Skills.MELEE_COOLDOWN
 	var origin := pivot.global_position   # on the crosshair line in both views, at our own head
@@ -771,6 +795,16 @@ func apply_powerup(kind: String) -> void:
 		vanish_time = Skills.VANISH_TIME
 	powerups[kind] = PowerUps.DURATION.get(kind, 0.0)
 	powerup_taken.emit(kind)
+
+
+# A demon's Fear caught us: panic for a few seconds.
+func scare(from: Vector3, seconds: float) -> void:
+	if role != "angel":
+		return
+	feared = maxf(feared, clampf(seconds, 0.0, Skills.FEAR_TIME))
+	_fear_from = from
+	_fear_dir = Vector3.ZERO
+	scared.emit()
 
 
 func powerup_left(kind: String) -> float:
@@ -950,7 +984,7 @@ var on_claim: Callable           # set by the network code for joined players
 
 
 func try_throw() -> bool:
-	if _throw_cooldown > 0.0 or throw_stamina < THROW_COST:
+	if _throw_cooldown > 0.0 or throw_stamina < THROW_COST or feared > 0.0:
 		return false
 	_throw_strength = clampf(throw_stamina / (THROW_STAMINA_MAX * WEAK_THROW_BELOW), 0.0, 1.0)
 	throw_stamina -= THROW_COST

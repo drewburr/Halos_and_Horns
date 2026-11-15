@@ -939,6 +939,37 @@ func _run() -> void:
 	check(not is_equal_approx(player.rotation.y, body_yaw) and is_zero_approx(player.pivot.rotation.y),
 			"angel: the mouse turns you, so the crosshair stays true")
 
+	# Fear: angels near a shrieking demon (who can see it) scatter, and can't attack.
+	main.role = "angel"
+	main.state = main.State.HUNTING
+	var fear_at: Vector3 = clear_lane(Vector3(-14, 0.1, 6), Vector3(1, 0, 0), 16.0)
+	var shrieker = get_nodes_in_group("demon")[0]
+	shrieker.global_position = fear_at
+	player.global_position = fear_at + Vector3(4, 0, 0)
+	player.velocity = Vector3.ZERO
+	player.throw_stamina = 100.0
+	await frames(5)
+	main.authority_skill(shrieker, 7, "fear", shrieker.global_position, Vector3.FORWARD, Vector3.ZERO, -1)
+	check(player.feared > 2.5, "Fear: an angel nearby panics")
+	check(not player.try_throw() and not player.melee() and not player.use_skill(0), "...and can't throw, swing or use skills")
+	var fear_d0: float = player.global_position.distance_to(shrieker.global_position)
+	await frames(60)
+	var fear_d1: float = player.global_position.distance_to(shrieker.global_position)
+	check(fear_d1 > fear_d0 + 2.0, "...and runs off, away from the demon (%.1f m -> %.1f m)" % [fear_d0, fear_d1])
+	await frames(150)
+	check(player.feared <= 0.0, "...and it wears off after 3 seconds")
+	player.global_position = fear_at + Vector3(12, 0, 0)
+	await frames(3)
+	player.feared = 0.0
+	main.authority_skill(shrieker, 7, "fear", shrieker.global_position, Vector3.FORWARD, Vector3.ZERO, -1)
+	check(player.feared <= 0.0, "...angels further than 10 m away don't")
+	player.global_position = fear_at + Vector3(6, 0, 0)
+	var fear_wall: Node3D = main._add_block(fear_at + Vector3(3, 2, 0), Vector3(0.5, 4, 6), Color.GRAY)
+	await frames(3)
+	main.authority_skill(shrieker, 7, "fear", shrieker.global_position, Vector3.FORWARD, Vector3.ZERO, -1)
+	check(player.feared <= 0.0, "...nor angels behind a wall")
+	fear_wall.queue_free()
+
 	# The shrine: the only place to swap skills mid-round, and it takes 3 s in total.
 	main.state = main.State.HUNTING
 	main.role = "demon"          # (the Hellfire check above switched only the player to demon)

@@ -1323,6 +1323,20 @@ func s_healed() -> void:
 	main.player.powerup_taken.emit("heal")
 
 
+func scare_player(id: int, from: Vector3, seconds: float) -> void:
+	if id == 1:
+		main.player.scare(from, seconds)
+	elif peers.has(id):
+		peers[id]["grace_until"] = now() + seconds + 0.5
+		s_scared.rpc_id(id, from, seconds)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_scared(from: Vector3, seconds: float) -> void:
+	print("[net] scared!")
+	main.player.scare(from, seconds)
+
+
 func burn_player(id: int, seconds: float) -> void:
 	if id == 1:
 		main.player.burning = maxf(main.player.burning, seconds)

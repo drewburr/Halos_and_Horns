@@ -10,7 +10,7 @@ GODOT="${GODOT:-godot}"
 OUT="$(mktemp -d)"
 cd "$(dirname "$0")/.."
 
-"$GODOT" --headless -- --host --name=Theo --autobot --autostart=5 --hide=14 --hunt=150 --quit-after-round --skills=possess,minion \
+"$GODOT" --headless -- --host --name=Theo --autobot --autostart=5 --hide=14 --hunt=150 --quit-after-round --skills=possess,fear \
 	--roles=Theo:demon,Wife:angel,Brother:demon,Squirrel:angel,Oddy:demon > "$OUT/host.log" 2>&1 &
 sleep 3
 for n in Wife Brother Squirrel Oddy; do
@@ -88,6 +88,10 @@ if [ $(grep -c 'was caught' "$OUT/host.log") -ge 2 ]; then
 fi
 if grep -q 'used minion' "$OUT/Brother.log"; then
 	check "a demon sent out a minion and the host showed it to everyone" "grep -q 'Brother sent out a minion' '$OUT/host.log'"
+fi
+if grep -q 'BOT Theo: used fear' "$OUT/host.log"; then
+	check "Fear: the host scattered the angels near the demon" "grep -qE 'fear: [1-9] angel' '$OUT/host.log'"
+	check "...and a scared angel was told" "grep -q 'scared!' '$OUT/Wife.log' '$OUT/Squirrel.log' '$OUT/Brother.log' '$OUT/Oddy.log'"
 fi
 if grep -qE 'picked up vanish' "$OUT/host.log"; then
 	check "Invisibility power-up: the host hid the demon from the angels" "grep -q ' vanished' '$OUT/host.log'"

@@ -29,6 +29,8 @@ const SKILLS := {
 		"desc": "Blink to where your crosshair points, up to 20 m away (further than that: as far as you can go that way). Very expensive."},
 	"fire": {"team": "demon", "label": "Hellfire", "cooldown": 2.0, "hatred": 35.0,
 		"desc": "Fling a fireball from your hands; where it lands, fire burns for 6 seconds. Angels caught in it are slowed, stagger about, can barely see straight and their blessings burn away. Costs Hatred, and the fireball shows where it came from."},
+	"fear": {"team": "demon", "label": "Fear", "cooldown": 20.0, "hatred": 45.0,
+		"desc": "Let out a hellish shriek. Every angel within 10 m who can see you panics for 3 seconds: they run off in a blind scatter, away from you, and can't throw or use skills until it wears off."},
 	"possess": {"team": "demon", "label": "Possess", "cooldown": 1.5,
 		"desc": "Become a real prop instead of a copy (press its key while aiming at the prop). The one you leave behind slowly dissolves."},
 }
@@ -52,6 +54,8 @@ const SCRIPTURE_DAMAGE := 40       # a blessing does 25
 const SCRIPTURE_SPEED := 24.0
 const SCRIPTURE_GRAVITY := 14.0
 const KICK_RANGE := 2.8
+const FEAR_RADIUS := 10.0
+const FEAR_TIME := 3.0
 const KICK_PUSH := 7.0            # how far a kicked demon flies
 const KICK_DAMAGE := 20           # (melee is 34)
 const STOMP_SPEED := 30.0

@@ -212,6 +212,7 @@ func _ready() -> void:
 	player.hit_confirmed.connect(_on_hit_confirmed)
 	player.taunted.connect(_on_taunted)
 	player.bounced.connect(func(): _play("bounce"))
+	player.scared.connect(func(): _toast("FEAR! You run for your life!", Skills.FEAR_TIME))
 	player.powerup_taken.connect(func(kind):
 		_play("powerup")
 		_toast(PowerUps.LABELS.get(kind, kind) + "!", 1.5))
@@ -1785,6 +1786,23 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 			_auth_fires[_fire_counter] = {"owner": user_key, "pos": spot, "lit_at": _now() + flight[1],
 				"until": _now() + flight[1] + Skills.FIRE_LIFETIME}
 			print("[decider] hellfire lit")
+		"fear":
+			# Every angel close by who can see the demon panics.
+			var from: Vector3 = user.global_position
+			broadcast_fx("fear", [from])
+			var n := 0
+			for e in team_entries():
+				if e[2] != "angel" or e[1] == user:
+					continue
+				var a: Node3D = e[1]
+				if a.global_position.distance_to(from) > Skills.FEAR_RADIUS or not _can_see(user, a):
+					continue
+				n += 1
+				if a == player:
+					player.scare(from, Skills.FEAR_TIME)
+				elif net:
+					net.scare_player(e[0], from, Skills.FEAR_TIME)
+			print("[decider] fear: %d angel(s) scattered" % n)
 		"scripture":
 			var book := _spawn_scripture(origin, dir, false)
 			book.shooter = user
@@ -1910,6 +1928,26 @@ func _vacuum_at(center: Vector3) -> void:
 
 
 # Yank a demon somewhere, drain Hatred, lock their skills.
+# Nothing solid (walls, blocks) between two people's heads?
+func _can_see(a: Node3D, b: Node3D) -> bool:
+	var q := PhysicsRayQueryParameters3D.create(a.global_position + Vector3.UP * 1.2, b.global_position + Vector3.UP * 1.2)
+	q.collision_mask = WORLD_LAYER
+	var skip := []
+	for n in [a, b]:
+		if n is CollisionObject3D:
+			skip.append(n.get_rid())
+	for _i in 6:
+		q.exclude = skip
+		var hit := get_world_3d().direct_space_state.intersect_ray(q)
+		if hit.is_empty():
+			return true
+		var c = hit["collider"]
+		if c is Node and world_root and world_root.is_ancestor_of(c):
+			return false   # part of the map (a wall, a block): blocked
+		skip.append(hit["rid"])   # props and people don't block the shriek
+	return true
+
+
 func _affect_demon(node: Node3D, target: Vector3, hatred_drain: float, lockout: float, label: String) -> void:
 	if node is BotDemon:
 		var tw := node.create_tween()
@@ -2259,6 +2297,13 @@ func fx(kind: String, args: Array) -> void:
 			fires[args[0]] = f
 		"kick":
 			Effects.puff(_fx_parent(), args[0], Color(1.0, 0.95, 0.6, 0.8), 1.2)
+		"fear":
+			for i in 12:
+				var a := TAU * i / 12.0
+				Effects.puff(_fx_parent(), args[0] + Vector3(cos(a), 0.4, sin(a)) * Skills.FEAR_RADIUS * 0.5, Color(0.25, 0.0, 0.3, 0.7), 2.0)
+			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 1.0, Color(0.15, 0.0, 0.2, 0.85), 3.0)
+			if player.global_position.distance_to(args[0]) < 35.0:
+				_play("fear")
 		"minion_pop":
 			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.6, Color(0.35, 0.05, 0.08, 0.8), 1.6)
 		"stomp":
@@ -2740,6 +2785,8 @@ func _build_sounds() -> void:
 		"sense": Sfx.voice([[784, 784, 0.09, 1.0, 0.02], [988, 988, 0.09, 1.0, 0.02], [1175, 1175, 0.22, 1.0, 0.0]], 0.24, 0.0, 0.03, 0.03),
 		"bounce": Sfx.voice([[180, 520, 0.16, 0.9, 0.0], [520, 380, 0.12, 0.5, 0.0]], 0.18, 0.0, 0.02, 0.02),
 		"powerup": Sfx.voice([[660, 990, 0.12, 0.8, 0.0], [990, 1320, 0.18, 0.7, 0.0]], 0.2, 0.0, 0.02, 0.02),
+		# Fear: a hellish shriek.
+		"fear": Sfx.voice([[260, 880, 0.12, 1.0, 0.0], [880, 640, 0.25, 1.0, 0.0], [640, 150, 0.45, 0.9, 0.0]], 0.28, 0.7, 0.08, 0.06),
 	}
 	for kind in Blessings.names():
 		streams["throw_" + kind] = Sfx.throw_sound(kind)
