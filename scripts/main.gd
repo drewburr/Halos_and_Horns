@@ -17,13 +17,15 @@ const Skills = preload("res://scripts/skills.gd")
 const Cherub = preload("res://scripts/cherub.gd")
 const Fire = preload("res://scripts/fire.gd")
 const Minion = preload("res://scripts/minion.gd")
+const PowerUps = preload("res://scripts/powerups.gd")
+const Keybinds = preload("res://scripts/keybinds.gd")
 const Shrine = preload("res://scripts/shrine.gd")
 const SHRINE_POS := Vector3(-20, 0, 4)   # the one shrine on this map
 const Vortex = preload("res://scripts/vortex.gd")
 const Projectile = preload("res://scripts/projectile.gd")
 const Updater = preload("res://scripts/updater.gd")
 
-const GAME_CODENAME := "Redemption"
+const GAME_CODENAME := "Power-ups"
 const HIDE_TIME := 30.0
 const HUNT_TIME := 180.0
 const HEAT_SHADER := """
@@ -71,10 +73,18 @@ var _auth_cherubs := {}     # cherub id -> {pos, until, alarmed} (decider only)
 var _cherub_counter := 0
 var fires := {}              # fire id -> Fire node (everyone; angels check if they're standing in one)
 var _fire_counter := 0
+var powerups                 # power-up drops and pickups (powerups.gd)
+var _auth_fires := {}        # decider: fire id -> {owner, pos, lit_at, until} (who earns Hatred from it)
+var _naughty_tick := 0.0
 var _cherub_check := 0.0
 var _possessions := {}       # who possesses which prop: user key -> prop index (decider only)
 var _loadout_buttons: Array = []   # [team, slot, OptionButton]
 var skill_label: Label
+var bonus_label: Label
+var powerup_label: Label
+var _sense_bubble: MeshInstance3D
+var _sense_sound_time := 0.0
+var _bonus_time := 0.0
 var shrine: Node3D
 var shrine_panel: PanelContainer
 var _shrine_buttons := []       # the two OptionButtons for the current side
@@ -185,15 +195,25 @@ func _ready() -> void:
 	player.form_changed.connect(func(): _play("possess"))
 	player.hit_confirmed.connect(_on_hit_confirmed)
 	player.taunted.connect(_on_taunted)
+	player.powerup_taken.connect(func(kind):
+		_play("powerup")
+		_toast(PowerUps.LABELS.get(kind, kind) + "!", 1.5))
+	player.hatred_bonus.connect(func(amount, reason):
+		bonus_label.text = "+%d Hatred: %s" % [int(round(amount)), reason]
+		_bonus_time = 2.5)
 	player.launched.connect(_on_player_launched)
 	player.hit_taken.connect(_on_player_hit_taken)
 	player.skill_used.connect(_on_player_skill)
 	player.pick_minion_form = random_map_prop_type
+	powerups = PowerUps.new()
+	powerups.main = self
+	add_child(powerups)
 	player.melee_used.connect(_on_player_melee)
 	player.released_possessed.connect(_on_player_released)
 	_build_tuning_panel()
 	_build_menu()
 	_build_pause_menu()
+	_build_controls()
 	_build_lobby()
 	_build_shrine_panel()
 	_build_chat()
@@ -217,42 +237,13 @@ func _add_key(action: String, key: Key) -> void:
 
 
 func _setup_input() -> void:
-	_add_key("move_forward", KEY_W)
-	_add_key("move_back", KEY_S)
-	_add_key("move_left", KEY_A)
-	_add_key("move_right", KEY_D)
-	_add_key("jump", KEY_SPACE)
-	_add_key("run", KEY_SHIFT)
-	_add_key("sneak", KEY_CTRL)
-	_add_key("toggle_view", KEY_T)
-	_add_key("free_look", KEY_ALT)
-	_add_key("cycle_blessing", KEY_B)
-	_add_key("switch_role", KEY_F2)
-	_add_key("scoreboard", KEY_TAB)
-	_add_key("restart", KEY_R)
-	_add_key("skip_hiding", KEY_ENTER)
-	_add_key("taunt_random", KEY_1)
-	_add_key("taunt_signature", KEY_2)
-	_add_key("toggle_tuning", KEY_F1)
-	_add_key("skill_1", KEY_Q)
-	_add_key("shrine", KEY_G)
-	_add_key("chat_all", KEY_ENTER)
-	_add_key("chat_team", KEY_BACKSPACE)
-	_add_key("melee", KEY_F)
-	if not InputMap.has_action("rmb"):
-		InputMap.add_action("rmb")
-		var right := InputEventMouseButton.new()
-		right.button_index = MOUSE_BUTTON_RIGHT
-		InputMap.action_add_event("rmb", right)
-	if not InputMap.has_action("shoot"):
-		InputMap.add_action("shoot")
-		var click := InputEventMouseButton.new()
-		click.button_index = MOUSE_BUTTON_LEFT
-		InputMap.action_add_event("shoot", click)
+	Keybinds.setup({})   # defaults now; saved choices are applied when settings load
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if mode == "menu":
+		if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE and controls_panel.visible:
+			_close_controls()
 		return
 	if chat_edit.visible:
 		if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
@@ -268,6 +259,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE and shrine_panel.visible:
 		_close_shrine()
+		return
+	if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE and controls_panel.visible:
+		_close_controls()
 		return
 	if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
 		pause_panel.visible = not pause_panel.visible
@@ -288,7 +282,7 @@ func _unhandled_input(event: InputEvent) -> void:
 # The mouse is free whenever a menu or panel is open; otherwise it steers.
 func _any_panel_open() -> bool:
 	return menu_panel.visible or pause_panel.visible or tuning_panel.visible or lobby_panel.visible \
-			or shrine_panel.visible or chat_edit.visible
+			or shrine_panel.visible or chat_edit.visible or (controls_panel != null and controls_panel.visible)
 
 
 func _refresh_mouse() -> void:
@@ -342,7 +336,7 @@ func _try_open_shrine() -> void:
 		_toast("Leave your prop first (hold left click).", 1.5)
 		return
 	_shrine_pick = player.loadout[role].duplicate()
-	var keys: Array = Skills.SLOT_KEYS
+	var keys: Array = [Keybinds.key_name("skill_1"), Keybinds.key_name("rmb")]
 	for slot in 2:
 		var ob: OptionButton = _shrine_buttons[slot]
 		ob.clear()
@@ -647,7 +641,9 @@ func _reset_round_props(seed_value: int) -> void:
 	used_spots.clear()
 	props.clear()
 	cherubs.clear()
+	powerups.reset()
 	_auth_cherubs.clear()
+	_auth_fires.clear()
 	fires.clear()
 	_possessions.clear()
 	rng.seed = seed_value
@@ -741,6 +737,7 @@ func _build_menu() -> void:
 	address_edit = _field(box, "Host's address (to join)", "e.g. 203.0.113.5")
 	_button(box, "Join a game", _on_join_pressed)
 	box.add_child(HSeparator.new())
+	_button(box, "Controls", _open_controls)
 	_button(box, "Quit", func(): get_tree().quit())
 	menu_status = Label.new()
 	menu_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -766,8 +763,139 @@ func _build_pause_menu() -> void:
 	_button(box, "Resume", func():
 		pause_panel.visible = false
 		_refresh_mouse())
+	_button(box, "Controls", _open_controls)
 	_button(box, "Leave to main menu", func(): _show_menu(""))
 	pause_panel.visible = false
+
+
+# ---- Controls: rebind any action to any key or mouse button ----
+var controls_panel: PanelContainer
+var _bind_buttons := {}        # action -> its Button
+var _rebinding := ""           # action waiting for a key press
+var _controls_note: Label
+
+
+func _build_controls() -> void:
+	var parts := _panel(560)
+	controls_panel = parts[0]
+	var solid := StyleBoxFlat.new()
+	solid.bg_color = Color(0.12, 0.12, 0.15, 0.97)
+	solid.set_corner_radius_all(6)
+	controls_panel.add_theme_stylebox_override("panel", solid)
+	var box: VBoxContainer = parts[1]
+	var title := Label.new()
+	title.text = "Controls"
+	title.add_theme_font_size_override("font_size", 28)
+	box.add_child(title)
+	var hint := Label.new()
+	hint.text = "Click a key, then press the key or mouse button you want. Esc cancels."
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(hint)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(540, 420)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	box.add_child(scroll)
+	var rows := VBoxContainer.new()
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(rows)
+	for a in Keybinds.ACTIONS:
+		var row := HBoxContainer.new()
+		var lbl := Label.new()
+		lbl.text = a[1]
+		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		row.add_child(lbl)
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(150, 34)
+		var action: String = a[0]
+		b.pressed.connect(func(): _start_rebind(action))
+		row.add_child(b)
+		rows.add_child(row)
+		_bind_buttons[action] = b
+	_controls_note = Label.new()
+	_controls_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_controls_note.add_theme_color_override("font_color", Color(1.0, 0.8, 0.5))
+	box.add_child(_controls_note)
+	var bottom := HBoxContainer.new()
+	box.add_child(bottom)
+	var reset := Button.new()
+	reset.text = "Reset all to defaults"
+	reset.custom_minimum_size.y = 40
+	reset.pressed.connect(func():
+		Keybinds.setup({})
+		_controls_note.text = "Back to the default keys."
+		_refresh_controls()
+		_save_settings())
+	bottom.add_child(reset)
+	var done := Button.new()
+	done.text = "Done"
+	done.custom_minimum_size = Vector2(120, 40)
+	done.pressed.connect(_close_controls)
+	bottom.add_child(done)
+	controls_panel.visible = false
+
+
+var _controls_hid: Control     # the menu we hid while Controls is open
+
+
+func _open_controls() -> void:
+	_controls_hid = menu_panel if menu_panel.visible else (pause_panel if pause_panel.visible else null)
+	if _controls_hid:
+		_controls_hid.visible = false
+	_rebinding = ""
+	_controls_note.text = ""
+	_refresh_controls()
+	controls_panel.visible = true
+	_refresh_mouse()
+
+
+func _close_controls() -> void:
+	_rebinding = ""
+	controls_panel.visible = false
+	if _controls_hid:
+		_controls_hid.visible = true
+		_controls_hid = null
+	_save_settings()
+	_refresh_mouse()
+
+
+func _refresh_controls() -> void:
+	for action in _bind_buttons:
+		_bind_buttons[action].text = "..." if action == _rebinding else Keybinds.key_name(action)
+
+
+func _start_rebind(action: String) -> void:
+	_rebinding = action
+	_controls_note.text = ""
+	_refresh_controls()
+
+
+# While waiting for a key: the next key or mouse button becomes the binding.
+func _input(event: InputEvent) -> void:
+	if _rebinding == "" or not controls_panel.visible:
+		return
+	if not (event is InputEventKey or event is InputEventMouseButton) or not event.pressed:
+		return
+	get_viewport().set_input_as_handled()
+	if event is InputEventKey and event.physical_keycode == KEY_ESCAPE:
+		_rebinding = ""
+		_refresh_controls()
+		return
+	var code := Keybinds.code_of(event)
+	if code == "":
+		return
+	# Whatever else used that key gives it up (except the practice-only skip, which
+	# shares Enter with chat on purpose).
+	var moved_from := []
+	for a in Keybinds.ACTIONS:
+		if a[0] != _rebinding and Keybinds.current(a[0]) == code and not (a[0] in ["skip_hiding", "chat_all"] and _rebinding in ["skip_hiding", "chat_all"]):
+			Keybinds.bind(a[0], "")
+			moved_from.append(a[1])
+	Keybinds.bind(_rebinding, code)
+	_controls_note.text = ("%s was also on that key; it's now unbound." % ", ".join(moved_from)) if not moved_from.is_empty() else ""
+	_rebinding = ""
+	_refresh_controls()
+	_save_settings()
 
 
 func _build_lobby() -> void:
@@ -840,7 +968,7 @@ func _build_loadout(parent: Control) -> void:
 		lbl.text = "Angel:" if team == "angel" else "Demon:"
 		lbl.custom_minimum_size.x = 64
 		row.add_child(lbl)
-		var keys: Array = Skills.SLOT_KEYS
+		var keys: Array = ["Skill 1", "Skill 2"]   # (the keys are on the Controls screen)
 		for slot in 2:
 			var ob := OptionButton.new()
 			ob.add_item("%s: none" % keys[slot])
@@ -894,6 +1022,11 @@ func _load_settings() -> void:
 	if _settings.get_value("skills", "version", 1) < 2:
 		loadout["demon"] = Skills.DEFAULTS["demon"].duplicate()
 	_apply_loadout()
+	var saved_keys := {}
+	if _settings.has_section("keys"):
+		for action in _settings.get_section_keys("keys"):
+			saved_keys[action] = str(_settings.get_value("keys", action))
+	Keybinds.setup(saved_keys)
 
 
 func _save_settings() -> void:
@@ -903,6 +1036,8 @@ func _save_settings() -> void:
 	_settings.set_value("skills", "angel", loadout["angel"])
 	_settings.set_value("skills", "demon", loadout["demon"])
 	_settings.set_value("skills", "version", 2)
+	for a in Keybinds.ACTIONS:
+		_settings.set_value("keys", a[0], Keybinds.current(a[0]))
 	_settings.save(SETTINGS_PATH)
 
 
@@ -1058,18 +1193,24 @@ func start_round() -> void:
 	blind_rect.visible = role == "angel"
 	controls_label.text = _controls_text()
 	if role == "angel":
-		_toast("The demons are hiding...\n(Enter to skip the wait while testing)", HIDE_TIME)
+		_toast("The demons are hiding...\n(%s to skip the wait while testing)" % Keybinds.key_name("skip_hiding"), HIDE_TIME)
 	else:
 		_toast("Demon sandbox: practice possessing props.\nTry Host / Join for real hunting.", 5.0)
 
 
 func _controls_text() -> String:
-	var common := "WASD move   Shift run   Ctrl sneak   Space jump   1 / 2 taunt   T first/third person"
-	var side := "Left click throw   Q / Right click skills   F melee   G swap skills (at the shrine)   B blessing (testing)" if role == "angel" \
-			else "Click a prop: transform   Hold click: demon form   Q / Right click skills (hold Fly to rise)   G swap skills (at the shrine)"
+	var k := Keybinds.key_name
+	var move := "%s%s%s%s" % [k.call("move_forward"), k.call("move_left"), k.call("move_back"), k.call("move_right")]
+	var common := "%s move   %s run   %s sneak   %s jump   %s / %s taunt   %s first/third person" % [
+		move, k.call("run"), k.call("sneak"), k.call("jump"), k.call("taunt_random"), k.call("taunt_signature"), k.call("toggle_view")]
+	var skills := "%s / %s skills" % [k.call("skill_1"), k.call("rmb")]
+	var side := "%s throw   %s   %s melee   %s look around   %s swap skills (at the shrine)" % [
+		k.call("shoot"), skills, k.call("melee"), k.call("free_look"), k.call("shrine")] if role == "angel" \
+		else "%s a prop: transform   Hold %s: demon form   %s (hold Fly to rise)   %s + mouse: turn your prop   %s swap skills (at the shrine)" % [
+		k.call("shoot"), k.call("shoot"), skills, k.call("run"), k.call("shrine")]
 	if mode == "practice":
-		return common + "\n" + side + "   F2 switch side   R restart   F1 movement tuning   Esc menu"
-	return common + "\n" + side + "   Tab roster   F1 movement tuning   Esc menu"
+		return common + "\n" + side + "   %s switch side   %s restart   %s movement tuning   Esc menu" % [k.call("switch_role"), k.call("restart"), k.call("toggle_tuning")]
+	return common + "\n" + side + "   %s roster   %s / %s chat   Esc menu" % [k.call("scoreboard"), k.call("chat_all"), k.call("chat_team")]
 
 
 func _start_hunting() -> void:
@@ -1088,8 +1229,10 @@ func _end_round(message: String) -> void:
 	_toast(message + "\nR to play again   Tab to switch sides", 9999.0)
 
 
-func _on_bot_caught(_bot) -> void:
+func _on_bot_caught(bot) -> void:
 	_play("caught")
+	if is_instance_valid(bot):
+		powerups.demon_caught(bot.global_position)
 	bots_left -= 1
 	if bots_left <= 0 and state == State.HUNTING:
 		_end_round("All demons caught! Angels win!")
@@ -1109,6 +1252,10 @@ func _process(delta: float) -> void:
 		time_left = maxf(time_left - delta, 0.0)   # the host decides when phases change
 	if is_authority():
 		_check_cherubs(delta)
+		_check_naughty(delta)
+		if state == State.HUNTING:
+			powerups.decider_tick(delta)
+			_check_sense(delta)
 	_check_burning()
 	_update_shrine(delta)
 	_update_chat(delta)
@@ -1351,6 +1498,7 @@ func _spawn_my_minion(at: Vector3, form_index: int) -> void:
 		var hp := [PropLib.max_hp(m.form) * Skills.MINION_HEALTH]
 		m.on_hit = func(_by, damage):
 			hp[0] -= damage
+			award_hatred(0, Skills.NAUGHTY_MINION_HIT, "your minion fooled an angel")
 			if hp[0] <= 0 and is_instance_valid(m):
 				m.pop()
 			return true
@@ -1407,6 +1555,23 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 		"minion":
 			if net and net.is_host:
 				net.minion_spawned(user_key, point, index)
+		"vanish":
+			if net and net.is_host:
+				net.set_vanished(user_key, Skills.VANISH_TIME)
+		"teleport":
+			var from: Vector3 = user.global_position
+			if Vector2(point.x - from.x, point.z - from.z).length() > Skills.TELEPORT_RANGE + 3.0:
+				return
+			# (Too far: the point is set high up, so you land on top of whatever is there.)
+			var dest := ground_below(point + Vector3.UP * 0.5)
+			if absf(dest.x) > MAP_HALF - 1.0 or absf(dest.z) > MAP_HALF - 1.0 or point.y > CEILING:
+				return
+			broadcast_fx("teleport", [from, dest])
+			if mode == "practice":
+				player.teleport_to(dest)
+			elif net:
+				net.teleport_player(user_key, dest)
+			print("[decider] teleport")
 		"cherub":
 			# Thrown from the angel's hands; where it ends up is up to physics.
 			_cherub_counter += 1
@@ -1426,6 +1591,8 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 			var flight := _fly_until_hit(from, vel, Skills.FIRE_GRAVITY, [user])
 			var spot := ground_below(flight[0] - vel.normalized() * 0.3)
 			broadcast_fx("fire", [_fire_counter, from, vel, spot, flight[1]])
+			_auth_fires[_fire_counter] = {"owner": user_key, "pos": spot, "lit_at": _now() + flight[1],
+				"until": _now() + flight[1] + Skills.FIRE_LIFETIME}
 			print("[decider] hellfire lit")
 		"scripture":
 			var book := _spawn_scripture(origin, dir, false)
@@ -1605,6 +1772,129 @@ func kick_cherub(cid: int, shot_velocity: Vector3) -> void:
 	print("[decider] cherub kicked")
 
 
+func _now() -> float:
+	return Time.get_ticks_msec() / 1000.0
+
+
+# ---- Hatred for naughtiness ----
+# Demons earn a little Hatred for being naughty: angels roasting in their fire,
+# their minion fooling an angel, taunting right under an angel's nose.
+# The decider (host / practice game) hands it out.
+# ---- Power-ups (the drops are in powerups.gd) ----
+
+# Everyone the decider can see: [key, body, team]. (Practice: you, and the test demons.)
+func team_entries() -> Array:
+	if mode == "practice":
+		var out := [[0, player, role]]
+		var i := 1
+		for b in get_tree().get_nodes_in_group("demon"):
+			out.append([-i, b, "demon"])
+			i += 1
+		return out
+	return net.team_entries() if net else []
+
+
+# Decider: someone picked up a power-up.
+func give_powerup(user_key: int, kind: String, where: Vector3) -> void:
+	if user_key < 0:
+		return   # a practice test demon walked over it
+	if kind == "fire_burst":
+		broadcast_fx("fire_burst", [where])
+		var burned := 0
+		for e in team_entries():
+			if e[2] == "angel" and e[1].global_position.distance_to(where) <= PowerUps.FIRE_BURST_RADIUS:
+				burned += 1
+				if mode == "practice":
+					e[1].burning = maxf(e[1].burning, Skills.FIRE_LINGER * 2.0)
+				elif net:
+					net.burn_player(e[0], Skills.FIRE_LINGER * 2.0)
+		if burned > 0:
+			award_hatred(user_key, Skills.NAUGHTY_FIRE_PER_SEC * burned, "your fire burst caught an angel")
+		return
+	if mode == "practice":
+		player.apply_powerup(kind)
+	elif net:
+		net.give_powerup(user_key, kind)
+
+
+# Cherub Sense: a red bubble pulses around you and the horn blares while a demon is close.
+func _update_sense_bubble(delta: float) -> void:
+	if _sense_bubble == null:
+		_sense_bubble = MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 1.0
+		sm.height = 2.0
+		_sense_bubble.mesh = sm
+		var mat := StandardMaterial3D.new()
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mat.albedo_color = Color(1.0, 0.15, 0.1, 0.12)
+		_sense_bubble.material_override = mat
+		player.add_child(_sense_bubble)
+	_sense_bubble.visible = player.sense_alarm
+	if player.sense_alarm:
+		var tt := Time.get_ticks_msec() / 1000.0
+		_sense_bubble.scale = Vector3.ONE * Skills.CHERUB_RADIUS * (0.6 + 0.4 * absf(sin(tt * 3.0)))
+		_sense_bubble.position.y = 0.9
+		_sense_sound_time -= delta
+		if _sense_sound_time <= 0.0:
+			_sense_sound_time = 0.8
+			_play("sense")
+
+
+# Cherub Sense: an angel with it acts like a walking alarm cherub.
+var _sense_tick := 0.0
+
+
+func _check_sense(delta: float) -> void:
+	_sense_tick -= delta
+	if _sense_tick > 0.0:
+		return
+	_sense_tick = 0.25
+	if mode == "practice":
+		if role == "angel" and player.powerup_left("sense") > 0.0:
+			var near := false
+			for d in demon_targets():
+				if d.global_position.distance_to(player.global_position) <= Skills.CHERUB_RADIUS:
+					near = true
+			player.sense_alarm = near
+	elif net:
+		net.check_sense()
+
+
+func award_hatred(user_key: int, amount: float, reason: String) -> void:
+	if mode == "practice" and user_key == 0:
+		player.add_hatred(amount, reason)
+	elif net and net.is_host:
+		net.grant_hatred(user_key, amount, reason)
+
+
+func angel_nodes() -> Array:
+	if mode == "practice":
+		return [player] if role == "angel" else []
+	return net.angel_nodes() if net else []
+
+
+func _check_naughty(delta: float) -> void:
+	_naughty_tick -= delta
+	if _naughty_tick > 0.0 or state != State.HUNTING:
+		return
+	_naughty_tick = 0.5
+	var t := _now()
+	for id in _auth_fires.keys():
+		var f: Dictionary = _auth_fires[id]
+		if t > f["until"]:
+			_auth_fires.erase(id)
+			continue
+		if t < f["lit_at"]:
+			continue
+		for a in angel_nodes():
+			var off: Vector3 = a.global_position - f["pos"]
+			if Vector2(off.x, off.z).length() <= Skills.FIRE_RADIUS and off.y > -0.5 and off.y < 1.5:
+				award_hatred(f["owner"], Skills.NAUGHTY_FIRE_PER_SEC * 0.5, "an angel is roasting in your fire")
+
+
 # Our own angel standing in demon fire? (Slowed, blessings burn away.)
 func _check_burning() -> void:
 	if role != "angel" or state != State.HUNTING:
@@ -1686,8 +1976,28 @@ func _fx_parent() -> Node:
 	return round_root if round_root else self
 
 
+func fx_parent() -> Node:
+	return _fx_parent()
+
+
+func puff_at(pos: Vector3, color: Color, size: float) -> void:
+	Effects.puff(_fx_parent(), pos, color, size)
+
+
 func fx(kind: String, args: Array) -> void:
 	match kind:
+		"teleport":
+			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.8, Color(0.15, 0.02, 0.05, 0.85), 1.8)
+			Effects.puff(_fx_parent(), args[1] + Vector3.UP * 0.5, Color(0.15, 0.02, 0.05, 0.6), 0.9)
+		"powerup":
+			powerups.show_item(args[0], args[1], args[2])
+		"powerup_gone":
+			powerups.hide_item(args[0], args[1])
+		"fire_burst":
+			for i in 10:
+				var a := TAU * i / 10.0
+				Effects.puff(_fx_parent(), args[0] + Vector3(cos(a), 0.3, sin(a)) * PowerUps.FIRE_BURST_RADIUS * 0.6, Color(1.0, 0.45, 0.05, 0.85), 2.2)
+			Effects.puff(_fx_parent(), args[0] + Vector3.UP * 0.5, Color(1.0, 0.3, 0.0, 0.9), 3.5)
 		"cherub":
 			var c := Cherub.new()
 			c.cherub_id = args[0]
@@ -1740,6 +2050,29 @@ func fx(kind: String, args: Array) -> void:
 			_make_shell(args[0], args[1], args[2])
 
 
+# Host: how the props differ from the fresh layout right now (taken by demons, or
+# moved by vacuums), so someone joining mid-round sees the same thing as everyone.
+func prop_state() -> Array:
+	var gone := []
+	var moved := []
+	for i in props.size():
+		var prop = props[i]
+		if not is_instance_valid(prop) or not prop.is_in_group("prop"):
+			gone.append(i)
+		elif prop.has_meta("moved_to"):
+			moved.append([i, prop.get_meta("moved_to")])
+	return [gone, moved]
+
+
+func apply_prop_state(gone: Array, moved: Array) -> void:
+	for i in gone:
+		_set_prop_taken(int(i))
+	for m in moved:
+		var i := int(m[0])
+		if i >= 0 and i < props.size() and is_instance_valid(props[i]):
+			props[i].global_position = m[1]
+
+
 func _set_prop_taken(index: int) -> void:
 	if index < 0 or index >= props.size() or not is_instance_valid(props[index]):
 		return
@@ -1783,6 +2116,7 @@ func _pull_props(center: Vector3) -> void:
 		var target := Vector3(center.x, prop.global_position.y, center.z) + flat / d * maxf(1.2, d * 0.45)
 		var tw: Tween = prop.create_tween()
 		tw.tween_property(prop, "global_position", target, 1.2).set_ease(Tween.EASE_IN)
+		prop.set_meta("moved_to", target)   # (for anyone joining later)
 
 
 # ---------- command line (automated testing) ----------
@@ -1947,6 +2281,22 @@ func _build_hud() -> void:
 
 	_build_scoreboard(hud)
 
+	# Active power-ups, with seconds left
+	powerup_label = _make_label(18)
+	powerup_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	powerup_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	powerup_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	powerup_label.position.y -= 215
+	powerup_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.55))
+	hud.add_child(powerup_label)
+	# "+4 Hatred: taunting right under an angel's nose"
+	bonus_label = _make_label(18)
+	bonus_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	bonus_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bonus_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	bonus_label.position.y -= 185
+	bonus_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.35))
+	hud.add_child(bonus_label)
 	taunt_label = _make_label(22)
 	taunt_label.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	taunt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2053,8 +2403,8 @@ func _skill_text() -> String:
 	var lo: Array = player.loadout[role]
 	if role == "angel":
 		var melee := "ready" if player.melee_cd <= 0.0 else "..."
-		return "%s\n%s\n[F] Melee   %s" % [_skill_line("Q", lo[0]), _skill_line("Right click", lo[1]), melee]
-	var text := "%s\n%s" % [_skill_line("Q", lo[0]), _skill_line("Right click", lo[1])]
+		return "%s\n%s\n[%s] Melee   %s" % [_skill_line(Keybinds.key_name("skill_1"), lo[0]), _skill_line(Keybinds.key_name("rmb"), lo[1]), Keybinds.key_name("melee"), melee]
+	var text := "%s\n%s" % [_skill_line(Keybinds.key_name("skill_1"), lo[0]), _skill_line(Keybinds.key_name("rmb"), lo[1])]
 	if player.skill_lock > 0.0:
 		text += "\nSKILLS LOCKED  %.1fs" % player.skill_lock
 	return text
@@ -2154,6 +2504,9 @@ func _build_sounds() -> void:
 		"hit": Sfx.hit_sound(),
 		"caught": Sfx.caught_sound(),
 		"possess": Sfx.possess_sound(),
+		# Cherub Sense alarm: the cherub's little horn fanfare.
+		"sense": Sfx.voice([[784, 784, 0.09, 1.0, 0.02], [988, 988, 0.09, 1.0, 0.02], [1175, 1175, 0.22, 1.0, 0.0]], 0.24, 0.0, 0.03, 0.03),
+		"powerup": Sfx.voice([[660, 990, 0.12, 0.8, 0.0], [990, 1320, 0.18, 0.7, 0.0]], 0.2, 0.0, 0.02, 0.02),
 	}
 	for kind in Blessings.names():
 		streams["throw_" + kind] = Sfx.throw_sound(kind)
@@ -2179,6 +2532,8 @@ func _play(sound_name: String) -> void:
 func _on_hit_confirmed() -> void:
 	_play("hit")
 	_hitmarker_time = 0.3
+	if mode == "practice":
+		powerups.angels_made_progress()
 
 
 func _on_taunted(taunt_name: String) -> void:
@@ -2198,7 +2553,7 @@ func _update_hud(delta: float) -> void:
 	var at_shrine := (state == State.HIDING or state == State.HUNTING) and near_shrine(player.global_position) \
 			and not player.frozen
 	if at_shrine and not _was_at_shrine and not shrine_panel.visible:
-		_toast("Press G to swap your skills" + (" (leave your prop first)" if player.possessed_type != "" else ""), 2.5)
+		_toast("Press %s to swap your skills" % Keybinds.key_name("shrine") + (" (leave your prop first)" if player.possessed_type != "" else ""), 2.5)
 	_was_at_shrine = at_shrine
 	var want_board := mode != "menu" and Input.is_action_pressed("scoreboard") \
 			and not pause_panel.visible and not menu_panel.visible
@@ -2259,6 +2614,14 @@ func _update_hud(delta: float) -> void:
 	_taunt_label_time -= delta
 	if _taunt_label_time <= 0.0:
 		taunt_label.text = ""
+	_bonus_time -= delta
+	bonus_label.modulate.a = clampf(_bonus_time, 0.0, 1.0)
+	# Power-ups we have going, and Cherub Sense's alarm around us.
+	var active := []
+	for k in player.powerups:
+		active.append("%s %ds" % [PowerUps.LABELS.get(k, k), int(ceil(player.powerups[k]))])
+	powerup_label.text = "   ".join(active)
+	_update_sense_bubble(delta)
 	skill_label.visible = in_game
 	skill_label.text = _skill_text()
 

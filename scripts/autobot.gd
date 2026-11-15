@@ -139,6 +139,7 @@ func _play_demon(delta: float, p) -> void:
 		p.test_input = {}
 		_try_fire(p)
 		_try_minion(p, delta)
+		_try_escape(p)
 		return
 	_fly_time += delta
 	if _fly_time < 0.8:
@@ -162,7 +163,7 @@ func _play_demon(delta: float, p) -> void:
 				if d < best and d < 9.0:
 					best = d
 					_possess_target = prop
-	if _possess_target and is_instance_valid(_possess_target) and _possess_tries < 1.0:
+	if _possess_target and is_instance_valid(_possess_target) and _possess_tries < 2.5:
 		_possess_tries += delta
 		if not p.first_person["demon"]:
 			p.toggle_view()   # line it up through the eyes, not over the shoulder
@@ -175,6 +176,20 @@ func _play_demon(delta: float, p) -> void:
 	p.force_possess(types[randi() % types.size()])
 	_hidden = true
 	log_line("hiding as a copy of a " + p.possessed_type)
+
+
+# Hidden demon with Invisibility / Teleport: try each once during the hunt.
+func _try_escape(p) -> void:
+	if main.state != main.State.HUNTING:
+		return
+	for id in ["vanish", "teleport"]:
+		var slot: int = p.loadout["demon"].find(id)
+		if slot < 0 or _used.has(id):
+			continue
+		if id == "teleport":
+			p.pivot.rotation.x = -0.25   # somewhere on the ground ahead
+		if p.use_skill(slot):
+			_log_once(id)
 
 
 # Hidden demon with Minion: once the hunt is on, send one out and steer it for a bit.

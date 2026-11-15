@@ -294,15 +294,15 @@ func _run() -> void:
 	await frames(240)
 	check(player.throw_stamina >= player.THROW_STAMINA_MAX - 1.0,
 			"blessing stamina refills (%.0f)" % player.throw_stamina)
-	player.throw_regen_multiplier = 5.0   # the future quick-regen power-up
+	player.apply_powerup("quick_throw")   # the Quick Blessings power-up
 	player.throw_stamina = 0.0
 	var boosted := 0
 	for i in 60:
 		if player.try_throw():
 			boosted += 1
 		await frames(1)
-	check(boosted >= 8, "quick-regen power-up allows near-nonstop throwing (%d in 1 s from empty)" % boosted)
-	player.throw_regen_multiplier = 1.0
+	check(boosted >= 8, "Quick Blessings power-up allows near-nonstop throwing (%d in 1 s from empty)" % boosted)
+	player.powerups.clear()
 
 	player.global_position = Vector3(0, 0.05, 20)
 	player.rotation = Vector3.ZERO
@@ -318,6 +318,34 @@ func _run() -> void:
 	player.test_input = {}
 	check(bob_max - bob_min > 0.02 and bob_max - bob_min < 0.2,
 			"first-person head bob while walking (%.3f m)" % (bob_max - bob_min))
+	# Rebinding keys: any action to any key or mouse button, remembered next time.
+	var KB = load("res://scripts/keybinds.gd")
+	var melee_was: String = KB.current("melee")
+	main._open_controls()
+	main._start_rebind("melee")
+	var press := InputEventKey.new()
+	press.physical_keycode = KEY_V
+	press.pressed = true
+	main._input(press)
+	check(KB.key_name("melee") == "V" and InputMap.action_has_event("melee", KB.make_event("key:%d" % KEY_V)), "rebind melee to V")
+	main._start_rebind("jump")
+	var mouse4 := InputEventMouseButton.new()
+	mouse4.button_index = MOUSE_BUTTON_XBUTTON1
+	mouse4.pressed = true
+	main._input(mouse4)
+	check(KB.key_name("jump") == "Mouse 4", "...or a mouse button (jump on Mouse 4)")
+	main._start_rebind("sneak")
+	main._input(press)   # V again: sneak takes it, melee gives it up
+	check(KB.key_name("sneak") == "V" and KB.current("melee") == "", "...a key moves to the new action instead of doing two things")
+	main._close_controls()
+	KB.setup({})
+	main._load_settings()
+	check(KB.key_name("sneak") == "V" and KB.key_name("jump") == "Mouse 4", "...and your keys are remembered next time")
+	check("Mouse 4" in main._controls_text(), "...and the on-screen help uses your keys")
+	KB.setup({})
+	main._save_settings()
+	check(KB.current("melee") == melee_was, "reset to defaults")
+
 	# Banned names (spacing, l33t, look-alike letters...) are refused; normal names aren't.
 	var N = load("res://scripts/net_game.gd")
 	var blocked := true

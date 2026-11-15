@@ -66,7 +66,26 @@ func set_name_for_teammate(n: String) -> void:
 		_nameplate.text = n
 
 
+# Invisible demon (Invisibility): gone from view until updates about it resume.
+# (Only seen by angels: they also stop getting its position meanwhile.)
+var _vanished := false
+var _vanish_left := 0.0
+
+
+func vanish(seconds := 7.0) -> void:
+	_vanished = true
+	_vanish_left = seconds
+	if _visual:
+		_visual.visible = false
+	_nameplate.visible = false
+	if not snap:
+		_shape.disabled = true   # nothing there to bump into on this screen
+
+
 func apply_state(pos: Vector3, yaw: float, new_form: String, new_role: String) -> void:
+	if _vanished and not snap:
+		_unvanish()
+		_snaps.clear()            # reappear where it is now, no slide from where it vanished
 	_target_pos = pos
 	_target_yaw = yaw
 	var t := Time.get_ticks_msec() / 1000.0
@@ -95,6 +114,14 @@ func apply_state(pos: Vector3, yaw: float, new_form: String, new_role: String) -
 		form = new_form
 		role = new_role
 		_rebuild()
+
+
+func _unvanish() -> void:
+	_vanished = false
+	if _visual:
+		_visual.visible = true
+	_nameplate.visible = true
+	_shape.disabled = false
 
 
 func _rebuild() -> void:
@@ -135,7 +162,13 @@ func _smoothed() -> Array:
 	return [_snaps[-1][1], _snaps[-1][2]]
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
+	if _vanished:
+		_vanish_left -= delta
+		if _vanish_left <= 0.0:
+			_unvanish()
+		elif _visual:
+			_visual.visible = false
 	if not _has_state or _snaps.is_empty():
 		return
 	var sm := _smoothed()

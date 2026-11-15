@@ -154,11 +154,11 @@ func _run() -> void:
 	await frames(240)
 
 	player.hatred = player.HATRED_MAX
-	player.hatred_regen_multiplier = 6.0   # the future fast-Hatred power-up
+	player.apply_powerup("fast_hatred")     # the Hatred Surge power-up (4x regen for 15 s)
 	player.test_input = {"fly": true}
-	await frames(660)
-	check(player.flying, "with fast Hatred regen you can fly endlessly (11 s and counting)")
-	player.hatred_regen_multiplier = 1.0
+	await frames(600)
+	check(player.flying, "with a Hatred Surge you fly far longer (10 s and counting)")
+	player.powerups.clear()
 	player.test_input = {}
 	await frames(300)
 
@@ -528,6 +528,95 @@ func _run() -> void:
 	player.test_input = {}
 	await frames(60)
 
+	# ---- Power-ups ----
+	var pu = main.powerups
+	pu.reset()
+	main.state = main.State.HUNTING
+	# A struggling angel (nobody found or hit for 30 s) gets one dropped nearby...
+	player.global_position = clear_spot(Vector3(-12, 0.1, 18))
+	player.velocity = Vector3.ZERO
+	await frames(5)
+	pu._last_angel_help -= 31.0
+	await frames(15)
+	var angel_items: Array = pu._auth.values().filter(func(it): return it["team"] == "angel")
+	check(angel_items.size() == 1, "a struggling angel gets a power-up dropped nearby")
+	if angel_items.size() == 1:
+		var it_pos: Vector3 = angel_items[0]["pos"]
+		check(Vector2(it_pos.x - player.global_position.x, it_pos.z - player.global_position.z).length() < 6.0, "...close by")
+		player.global_position = Vector3(it_pos.x, 0.1, it_pos.z)
+		await frames(20)
+		check(not player.powerups.is_empty(), "...walk over it to pick it up (%s)" % ", ".join(player.powerups.keys()))
+		check(pu.items.is_empty(), "...and it's gone for everyone")
+	# Each effect.
+	player.powerups.clear()
+	player.apply_powerup("quick_run")
+	player.sprint_stamina = 0.0
+	await frames(3)
+	check(player.sprint_stamina >= player.SPRINT_MAX - 0.1, "Endless Sprint: running stamina stays full")
+	player.apply_powerup("quick_skills")
+	player.skill_cd["leap"] = 6.0
+	await frames(60)
+	check(player.skill_cd["leap"] < 3.5, "Quick Skills: cooldowns run 3x faster (%.1f s left of 6 after 1 s)" % player.skill_cd["leap"])
+	player.apply_powerup("quick_throw")
+	await frames(2)
+	check(player.throw_regen_multiplier > 5.0, "Quick Blessings: blessing stamina refills much faster")
+	player.powerups.clear()
+	await frames(2)
+	main.give_powerup(0, "fire_burst", player.global_position)
+	await frames(2)
+	check(player.burning > 0.0, "a demon's Fire Burst sets nearby angels burning")
+	await frames(250)
+	# Cherub Sense: walking near a demon sets off your own alarm.
+	var sensed = null
+	for b in get_nodes_in_group("demon"):
+		if b.health > 0:
+			sensed = b
+	if sensed:
+		player.apply_powerup("sense")
+		player.global_position = sensed.global_position + Vector3(3.0, 0.1, 0.0)
+		await frames(30)
+		check(player.sense_alarm, "Cherub Sense: you go off like a cherub when a demon's close")
+		player.global_position = Vector3(0, 0.1, 25)
+		await frames(30)
+		check(not player.sense_alarm, "...and quiet down away from them")
+	player.powerups.clear()
+	# Every redeemed demon drops an angel power-up where it was caught.
+	pu.reset()
+	pu.demon_caught(Vector3(5, 0, 20))
+	await frames(2)
+	check(pu._auth.size() == 1 and pu.items.size() == 1, "a redeemed demon drops an angel power-up")
+	# Demons' power-ups are dropped by the angels over time.
+	pu.reset()
+	pu._demon_timer = 0.1
+	await frames(20)
+	check(pu._auth.values().any(func(it): return it["team"] == "demon"), "angels drop demon power-ups as time goes by")
+	pu.reset()
+
+	# Ledge grab: in the air beside a roof edge your hands can reach, you pull yourself up.
+	player.rotation = Vector3.ZERO
+	player.pivot.rotation = Vector3.ZERO
+	player.global_position = Vector3(8, 2.0, 11.6)    # just off the hut's wall, roof at 4 m
+	player.velocity = Vector3.ZERO
+	player.test_input = {"dir": Vector2(0, -1)}       # pushing into the wall
+	var grabbed := false
+	for k in 40:
+		await frames(1)
+		grabbed = grabbed or player.is_mantling()
+	player.test_input = {}
+	await frames(10)
+	check(grabbed and player.global_position.y > 3.8 and player.is_on_floor(),
+			"grab a ledge your hands can reach and pull yourself up (y %.1f)" % player.global_position.y)
+	player.global_position = Vector3(8, 0.5, 11.6)    # from the ground: the roof's out of reach
+	player.velocity = Vector3(0, 2, 0)
+	player.test_input = {"dir": Vector2(0, -1)}
+	for k in 40:
+		await frames(1)
+	player.test_input = {}
+	check(player.global_position.y < 1.0, "...but not one that's out of reach")
+	player.global_position = Vector3(0, 0.1, 18)
+	player.velocity = Vector3.ZERO
+	await frames(20)
+
 	# Cloud Stomp: press the leap key again mid-air, slam down, hurt demons nearby.
 	var victim = null
 	for b in get_nodes_in_group("demon"):
@@ -595,19 +684,36 @@ func _run() -> void:
 	# Holy Kick: boots a demon away.
 	var kicked = null
 	for b in get_nodes_in_group("demon"):
-		if b.health > 0:
+		if b.health > Skills.KICK_DAMAGE:
 			kicked = b
+	check(kicked != null, "a test demon to kick")
 	if kicked:
 		player.loadout["angel"] = ["kick", "leap"]
 		player.skill_cd.clear()
-		await aim_at(player, kicked, 0.4, 1.8)   # roughly facing it is enough for a kick
+		# Stand on open ground right next to it, facing it.
+		for k in 12:
+			var a := TAU * k / 12.0
+			var spot: Vector3 = kicked.global_position + Vector3(cos(a), 0, sin(a)) * 1.6
+			if absf(main.ground_below(spot + Vector3.UP * 3.0).y - kicked.global_position.y) < 0.15:
+				player.global_position = spot + Vector3.UP * 0.1
+				break
+		player.velocity = Vector3.ZERO
+		await frames(5)
+		player.look_at(Vector3(kicked.global_position.x, player.global_position.y, kicked.global_position.z))
+		player.pivot.rotation = Vector3.ZERO
+		await frames(2)
+		var others_before := 0
+		for b in get_nodes_in_group("demon"):
+			others_before += b.health
 		var kd_before: float = kicked.global_position.distance_to(player.global_position)
-		var khp: int = kicked.health
 		check(player.use_skill(0), "Holy Kick")
 		await frames(40)
+		var others_after := 0
+		for b in get_nodes_in_group("demon"):
+			others_after += b.health
 		var kd_after: float = kicked.global_position.distance_to(player.global_position)
-		check(kd_after > kd_before + 4.0, "...sends the demon flying (%.1f m -> %.1f m)" % [kd_before, kd_after])
-		check(kicked.health == khp - Skills.KICK_DAMAGE, "...with a little damage")
+		check(kd_after > kd_before + 4.0 or others_after < others_before, "...sends the demon flying (%.1f m -> %.1f m)" % [kd_before, kd_after])
+		check(others_before - others_after == Skills.KICK_DAMAGE, "...with some damage (%d)" % (others_before - others_after))
 		player.loadout["angel"] = ["dash", "leap"]
 
 	# Hellfire (decided by the practice game here): an angel in it is slowed and burns blessings.
@@ -709,11 +815,14 @@ func _run() -> void:
 		check(m.velocity.length() < PropLib.speed("") + 0.5, "...no faster than a real demon")
 		await frames(30)
 		check(not m.steering, "...let go and it stops steering")
+		var hatred_before_hits: float = player.hatred
 		var hits_to_pop := 0
 		while is_instance_valid(m) and not m.is_queued_for_deletion() and hits_to_pop < 10:
 			m.take_hit(25, null)
 			hits_to_pop += 1
 		check(hits_to_pop == 2, "...flimsy: pops after 2 blessings (a real demon takes 4)")
+		check(player.hatred > hatred_before_hits + 10.0 or player.hatred >= player.HATRED_MAX - 0.1,
+				"...and each angel it fools earns you Hatred (naughty!)")
 	player.pivot.rotation.x = 0.0
 
 	# Disguised as a prop, the minion is some other prop that's on this map.
@@ -748,6 +857,40 @@ func _run() -> void:
 	check(Vector2(player.global_position.x - pinned_at.x, player.global_position.z - pinned_at.z).length() > 1.5,
 			"something on your head doesn't pin you in place")
 	sitter.queue_free()
+
+	# Invisibility and Teleport.
+	player.loadout["demon"] = ["vanish", "teleport"]
+	player.skill_cd.clear()
+	player.hatred = 100.0
+	check(player.use_skill(0), "Invisibility")
+	check(player.vanish_time > 6.0 and player.hatred < 65.0, "...you vanish for 6.5 s, for 40 Hatred")
+	await frames(10)
+	player.hatred = 100.0
+	player.global_position = clear_lane(Vector3(0, 0.1, 22), Vector3(0, 0, -1), 22.0)
+	player.velocity = Vector3.ZERO
+	player.rotation = Vector3.ZERO
+	player.pivot.rotation = Vector3(-0.2, 0, 0)   # crosshair on the ground ahead
+	await frames(5)
+	var tp_from: Vector3 = player.global_position
+	var tp_aim: Dictionary = player._aim_ray(Skills.TELEPORT_RANGE)
+	check(player.use_skill(1), "Teleport")
+	await frames(3)
+	var tp_moved := Vector2(player.global_position.x - tp_from.x, player.global_position.z - tp_from.z).length()
+	if not tp_aim.is_empty():
+		var tp_off := Vector2(player.global_position.x - tp_aim["position"].x, player.global_position.z - tp_aim["position"].z).length()
+		check(tp_off < 1.2, "...to where you aimed (%.1f m away, %.1f m off)" % [tp_moved, tp_off])
+	check(player.hatred < 45.0, "...for 60 Hatred")
+	player.skill_cd.clear()
+	player.hatred = 100.0
+	player.pivot.rotation = Vector3(0.05, 0, 0)   # aiming off into the sky: as far as allowed
+	await frames(3)
+	var tp2_from: Vector3 = player.global_position
+	check(player.use_skill(1), "Teleport toward the sky")
+	await frames(3)
+	var far := Vector2(player.global_position.x - tp2_from.x, player.global_position.z - tp2_from.z).length()
+	check(far > Skills.TELEPORT_RANGE - 3.0 and far <= Skills.TELEPORT_RANGE + 0.5 and player.global_position.y < 6.0,
+			"...goes as far as allowed that way, onto the ground (%.1f m)" % far)
+	player.pivot.rotation = Vector3.ZERO
 
 	# Angels: the mouse turns you (unless you hold Alt).
 	player.set_role("angel")

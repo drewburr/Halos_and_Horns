@@ -19,6 +19,7 @@ const Blessings = preload("res://scripts/blessings.gd")
 const Taunts = preload("res://scripts/taunts.gd")
 const Sfx = preload("res://scripts/sfx.gd")
 const Bodies = preload("res://scripts/bodies.gd")
+const PowerUps = preload("res://scripts/powerups.gd")
 const Skills = preload("res://scripts/skills.gd")
 
 const ANGEL_SPEED := 6.0
@@ -134,6 +135,7 @@ var _steer_local := Vector2.ZERO   # last direction steered, relative to where w
 var _pull_target := Vector3.ZERO
 var _pull_time := 0.0
 var minion: Node3D = null     # our decoy, if we have one out (main creates it)
+var vanish_time := 0.0         # Invisibility: seconds left
 var pick_minion_form: Callable # main: a random prop type that's on the map right now
 var burning := 0.0            # seconds left standing in demon fire (main refreshes it)
 var _move_dir := Vector2.ZERO # last movement keys held (Holy Leap launches that way)
@@ -197,6 +199,10 @@ func set_role(new_role: String) -> void:
 	clear_dash()
 	_pull_time = 0.0
 	burning = 0.0
+	vanish_time = 0.0
+	powerups.clear()
+	sense_alarm = false
+	_mantle_time = 0.0
 	_leaping = false
 	_stomping = false
 	_apply_form()
@@ -326,7 +332,11 @@ func _physics_process(delta: float) -> void:
 	melee_cd = maxf(melee_cd - delta, 0.0)
 	skill_lock = maxf(skill_lock - delta, 0.0)
 	for id in skill_cd:
-		skill_cd[id] = maxf(skill_cd[id] - delta, 0.0)
+		skill_cd[id] = maxf(skill_cd[id] - delta * (3.0 if powerup_left("quick_skills") > 0.0 else 1.0), 0.0)
+	_tick_powerups(delta)
+	if vanish_time > 0.0:
+		vanish_time -= delta
+	_ghostly(vanish_time > 0.0)
 	var on_floor := is_on_floor()
 
 	var controls_active := input_enabled and not frozen and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
@@ -369,6 +379,10 @@ func _physics_process(delta: float) -> void:
 
 	# Walking speed is everything except the dash momentum riding on top of it.
 	var current := Vector2(velocity.x, velocity.z) - _momentum
+	if _mantle_time > 0.0:
+		_mantle_step(delta)
+		move_and_slide()
+		return
 	if _pull_time > 0.0:
 		_pull_step(delta)
 		running = false
@@ -426,6 +440,8 @@ func _physics_process(delta: float) -> void:
 		velocity = Vector3(0.0, -Skills.STOMP_SPEED, 0.0)
 	move_and_slide()
 	_slide_off_heads()
+	if role == "angel" and not is_on_floor() and is_on_wall() and input_dir != Vector2.ZERO and not frozen:
+		_try_ledge_grab()
 	current = Vector2(velocity.x, velocity.z)
 	if _momentum != Vector2.ZERO and is_on_wall():
 		# Ran into something: keep only the momentum we're actually still moving with.
@@ -536,6 +552,76 @@ func pull_to(target: Vector3, seconds := 1.0) -> void:
 	clear_dash()
 
 
+# ---- Ledge grab (angels) ----
+# In the air, pushing into a wall whose top edge your hands could reach: grab it
+# and pull yourself up onto it.
+const LEDGE_REACH := 0.55       # how far above your head your hands reach
+const MANTLE_TIME := 0.35
+var _mantle_time := 0.0
+var _mantle_from := Vector3.ZERO
+var _mantle_to := Vector3.ZERO
+
+
+func _try_ledge_grab() -> void:
+	var wall_n := get_wall_normal()
+	wall_n.y = 0.0
+	if wall_n.length() < 0.5:
+		return
+	wall_n = wall_n.normalized()
+	var push := move_basis() * Vector3(_move_dir.x, 0.0, _move_dir.y)
+	if push.normalized().dot(-wall_n) < 0.4:
+		return   # not pushing toward the wall
+	var feet := global_position
+	var h := Bodies.height_for(role)
+	var space := get_world_3d().direct_space_state
+	# Feel for the top of the wall, just past its face, from hand height down to the waist.
+	var over := feet - wall_n * 0.45
+	var q := PhysicsRayQueryParameters3D.create(over + Vector3.UP * (h + LEDGE_REACH), over + Vector3.UP * (h * 0.45), 1)
+	q.exclude = [get_rid()]
+	var top := space.intersect_ray(q)
+	if top.is_empty() or top["normal"].y < 0.7:
+		return
+	var land: Vector3 = top["position"]
+	if land.y - feet.y < 0.4:
+		return   # that's just a step
+	# Room to stand up there?
+	var room := PhysicsRayQueryParameters3D.create(land + Vector3.UP * 0.05, land + Vector3.UP * (h + 0.1), 1)
+	room.exclude = [get_rid()]
+	if not space.intersect_ray(room).is_empty():
+		return
+	clear_dash()
+	_mantle_from = feet
+	_mantle_to = land + Vector3.UP * 0.05 - wall_n * 0.15
+	_mantle_time = MANTLE_TIME
+	velocity = Vector3.ZERO
+
+
+func _mantle_step(delta: float) -> void:
+	_mantle_time -= delta
+	var t := 1.0 - clampf(_mantle_time / MANTLE_TIME, 0.0, 1.0)
+	# Up first, then over the edge.
+	var up := clampf(t / 0.65, 0.0, 1.0)
+	var over := clampf((t - 0.45) / 0.55, 0.0, 1.0)
+	var p := _mantle_from
+	p.y = lerpf(_mantle_from.y, _mantle_to.y, up)
+	p.x = lerpf(_mantle_from.x, _mantle_to.x, over)
+	p.z = lerpf(_mantle_from.z, _mantle_to.z, over)
+	global_position = p
+	velocity = Vector3.ZERO
+
+
+# The decider moved us (Teleport).
+func teleport_to(pos: Vector3) -> void:
+	global_position = pos + Vector3.UP * 0.05
+	velocity = Vector3.ZERO
+	clear_dash()
+	_mantle_time = 0.0
+
+
+func is_mantling() -> bool:
+	return _mantle_time > 0.0
+
+
 func is_dashing() -> bool:
 	return _dash_time > 0.0
 
@@ -565,6 +651,16 @@ func use_skill(slot: int) -> bool:
 	var point := Vector3.ZERO
 	var index := -1
 	match id:
+		"vanish":
+			hatred -= Skills.hatred_cost(id)
+			vanish_time = Skills.VANISH_TIME
+		"teleport":
+			# Where to: the spot under the crosshair, or as far as allowed that way.
+			var spot := _aim_ray(150.0)
+			var aimed: Vector3 = spot["position"] - dir * 0.5 if not spot.is_empty() else origin + dir * 150.0
+			var reach := Vector3(aimed.x - global_position.x, 0.0, aimed.z - global_position.z).limit_length(Skills.TELEPORT_RANGE)
+			point = Vector3(global_position.x + reach.x, aimed.y if reach.length() < Skills.TELEPORT_RANGE - 0.01 else 20.0, global_position.z + reach.z)
+			hatred -= Skills.hatred_cost(id)
 		"minion":
 			if is_instance_valid(minion):
 				return false            # one at a time; holding the key steers it
@@ -648,6 +744,47 @@ func become_possessed(type_name: String, pos: Vector3, yaw: float, index: int) -
 	var tw := create_tween()
 	tw.tween_property(pivot, "position", cam_to, 0.3).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	form_changed.emit()
+
+
+# ---- Power-ups we're holding ----
+var powerups := {}            # kind -> seconds left
+var sense_alarm := false      # Cherub Sense: the host says a demon is close to us
+signal powerup_taken(kind)
+
+
+func apply_powerup(kind: String) -> void:
+	powerups[kind] = PowerUps.DURATION.get(kind, 0.0)
+	powerup_taken.emit(kind)
+
+
+func powerup_left(kind: String) -> float:
+	return powerups.get(kind, 0.0)
+
+
+# While invisible we see ourselves as a faint ghost (angels see nothing at all).
+var _ghost_on := false
+
+
+func _ghostly(on: bool) -> void:
+	if on == _ghost_on:
+		return
+	_ghost_on = on
+	for n in visual_root.find_children("*", "GeometryInstance3D", true, false):
+		(n as GeometryInstance3D).transparency = 0.75 if on else 0.0
+
+
+func _tick_powerups(delta: float) -> void:
+	for k in powerups.keys():
+		powerups[k] -= delta
+		if powerups[k] <= 0.0:
+			powerups.erase(k)
+			if k == "sense":
+				sense_alarm = false
+	throw_regen_multiplier = 6.0 if powerup_left("quick_throw") > 0.0 else 1.0
+	hatred_regen_multiplier = 4.0 if powerup_left("fast_hatred") > 0.0 else 1.0
+	if powerup_left("quick_run") > 0.0:
+		sprint_stamina = SPRINT_MAX
+		_sprint_exhausted = false
 
 
 func _update_sprint(delta: float, wants_to_run: bool) -> void:
@@ -913,6 +1050,17 @@ func _unpin() -> void:
 		if Vector2(off.x, off.z).length() > 1.4 or off.y > 3.0 or off.y < -1.0:
 			remove_collision_exception_with(n)
 			_pinned_by.erase(n)
+
+
+signal hatred_bonus(amount, reason)
+
+
+# The host (or practice game) says we were naughty: have some Hatred.
+func add_hatred(amount: float, reason: String) -> void:
+	if role != "demon":
+		return
+	hatred = clampf(hatred + amount, 0.0, HATRED_MAX)
+	hatred_bonus.emit(amount, reason)
 
 
 # Which way our body or prop faces, as everyone else should see it.

@@ -10,18 +10,20 @@ GODOT="${GODOT:-godot}"
 OUT="$(mktemp -d)"
 cd "$(dirname "$0")/.."
 
-"$GODOT" --headless -- --host --name=Theo --autobot --autostart=5 --hide=14 --hunt=150 --quit-after-round \
+"$GODOT" --headless -- --host --name=Theo --autobot --autostart=5 --hide=14 --hunt=150 --quit-after-round --skills=possess,vanish \
 	--roles=Theo:demon,Wife:angel,Brother:demon,Squirrel:angel,Oddy:demon > "$OUT/host.log" 2>&1 &
 sleep 3
 for n in Wife Brother Squirrel Oddy; do
 	extra=""
-	[ "$n" = "Oddy" ] && extra="--cheat=teleport,fly"
+	[ "$n" = "Oddy" ] && extra="--cheat=teleport,fly --skills=teleport,fly"
 	[ "$n" = "Wife" ] && extra="--skills=cherub,vacuum --say=hello_everyone --cheat=claim"
 	[ "$n" = "Squirrel" ] && extra="--skills=dash,leap"
 	[ "$n" = "Brother" ] && extra="--skills=fire,minion --sayteam=demons_only_secret"
 	timeout 240 "$GODOT" --headless -- --join=127.0.0.1 --name=$n --autobot --quit-after-round $extra > "$OUT/$n.log" 2>&1 &
 	sleep 0.5
 done
+# Someone joining mid-round (an angel) must see the props as they are by then.
+(sleep 24; timeout 200 "$GODOT" --headless -- --join=127.0.0.1 --name=Late --autobot --lazy --quit-after-round > "$OUT/Late.log" 2>&1) &
 wait
 
 fail=0
@@ -39,14 +41,15 @@ for n in Wife Brother Squirrel Oddy; do
 done
 check "flying without Hatred was caught" "grep -q 'blocked Oddy: flying without enough Hatred' '$OUT/host.log'"
 check "no false alarms (only Oddy was flagged)" "! grep '^\\[host\\] blocked' '$OUT/host.log' | grep -qv 'blocked Oddy'"
-check "demons flew" "grep -q 'flying' '$OUT/Brother.log' || grep -q 'flying' '$OUT/Theo.log'"
+check "demons flew" "grep -q 'flying' '$OUT/Brother.log' '$OUT/Theo.log' '$OUT/Oddy.log'"
 check "a demon possessed a real prop" "grep -q 'a demon possessed a' '$OUT/host.log'"
 check "an angel dropped an Alarm Cherub" "grep -q 'cherub dropped' '$OUT/host.log'"
 check "an angel threw a Vacuum Orb" "grep -q 'vacuum orb' '$OUT/host.log'"
 check "an angel used the Flying Dash" "grep -q 'used dash' '$OUT/Squirrel.log'"
 check "a demon flung Hellfire" "grep -q 'hellfire lit' '$OUT/host.log'"
 check "an angel used Holy Leap" "grep -q 'used leap' '$OUT/Squirrel.log'"
-if grep -q 'used stomp' "$OUT/Squirrel.log"; then
+# (only if the stomp landed before the round ended)
+if sed '/round over/q' "$OUT/Squirrel.log" | grep -q 'used stomp'; then
 	check "...and the host handled the Cloud Stomp" "grep -q 'cloud stomp hit' '$OUT/host.log'"
 fi
 check "the roster shows chosen skills" "grep -q 'Wife(angel,[0-9]*ms,Alarm Cherub+Vacuum Orb)' '$OUT/Brother.log'"
@@ -83,6 +86,18 @@ if [ $(grep -c 'was caught' "$OUT/host.log") -ge 2 ]; then
 fi
 if grep -q 'used minion' "$OUT/Brother.log"; then
 	check "a demon sent out a minion and the host showed it to everyone" "grep -q 'Brother sent out a minion' '$OUT/host.log'"
+fi
+if grep -q 'used vanish' "$OUT/Theo.log"; then
+	check "Invisibility: the host hid the demon from the angels" "grep -q 'Theo vanished' '$OUT/host.log'"
+fi
+if grep -q 'used teleport' "$OUT/Oddy.log"; then
+	check "Teleport: the host moved the demon" "grep -q 'teleport' '$OUT/host.log'"
+fi
+if grep -q 'was caught' "$OUT/host.log"; then
+	check "a redeemed demon drops an angel power-up" "grep -q 'angel power-up dropped' '$OUT/host.log'"
+fi
+if grep -q 'now playing as angel' "$OUT/Late.log" 2>/dev/null; then
+	check "a mid-round joiner catches up on taken and moved props" "grep -q 'caught up on the props' '$OUT/Late.log'"
 fi
 check "no player script errors" "! grep -q 'SCRIPT ERROR' '$OUT'/*.log"
 

@@ -16,6 +16,7 @@ const Taunts = preload("res://scripts/taunts.gd")
 const PropLib = preload("res://scripts/prop_library.gd")
 const Effects = preload("res://scripts/effects.gd")
 const Skills = preload("res://scripts/skills.gd")
+const PowerUps = preload("res://scripts/powerups.gd")
 
 const PROTOCOL_VERSION := 5      # (old) kept for reference; joining now checks main.game_build
 # Only the exact same build can join. The build number comes from the release tag
@@ -364,6 +365,9 @@ func _reset_round_mirrors(rec: Dictionary) -> void:
 	rec["active_at"] = now()
 	rec["dash_until"] = 0.0
 	rec["locked_until"] = 0.0
+	for k in ["fast_hatred_until", "quick_throw_until", "quick_skills_until", "sense_until"]:
+		rec[k] = 0.0
+	rec["sense_near"] = false
 
 
 func _place(rec: Dictionary, pos: Vector3) -> void:
@@ -425,9 +429,17 @@ func _add_late_joiner(id: int) -> void:
 	rec["stamina_time"] = now()
 	_place(rec, main.spawn_point("angel", randi() % 4))
 	_send_round_start(id)
+	var props_now: Array = main.prop_state()
+	s_prop_state.rpc_id(id, props_now[0], props_now[1])
 	_ensure_host_remote(id)
 	_send_rosters()
 	_broadcast_count()
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_prop_state(gone: Array, moved: Array) -> void:
+	main.apply_prop_state(gone, moved)
+	print("[net] caught up on the props: %d gone, %d moved" % [gone.size(), moved.size()])
 
 
 func _ensure_host_remote(id: int) -> void:
@@ -567,6 +579,8 @@ func _relay_states() -> void:
 			var rec: Dictionary = peers[id]
 			if id == viewer or not rec["in_round"]:
 				continue
+			if peers[viewer]["role"] == "angel" and _is_vanished(id):
+				continue   # invisible: angels get nothing about this demon
 			states.append([rec["eid"], rec["pos"], rec["yaw"], rec["form"], rec["role"]])
 		for owner in minions:
 			if owner != viewer:
@@ -708,7 +722,8 @@ func c_state(pos: Vector3, yaw: float, form: String, flying: bool) -> void:
 # the air for a while without flying (or a dash / pull the host approved) too.
 func _check_flight(id: int, rec: Dictionary, pos: Vector3, flying: bool, dt: float, t: float) -> void:
 	if rec["role"] == "demon":
-		rec["hatred"] = clampf(rec["hatred"] + HATRED_REGEN * dt - (HATRED_FLY_DRAIN * dt if flying else 0.0), -50.0, 100.0)
+		var regen := HATRED_REGEN * (4.0 if now() < rec.get("fast_hatred_until", 0.0) else 1.0)
+		rec["hatred"] = clampf(rec["hatred"] + regen * dt - (HATRED_FLY_DRAIN * dt if flying else 0.0), -50.0, 100.0)
 		if flying and rec["hatred"] < -15.0:
 			rec["hatred"] = 0.0
 			_note_cheat(id, "flying without enough Hatred")
@@ -787,7 +802,8 @@ func c_throw(origin: Vector3, velocity: Vector3, kind: String, gravity: float, s
 	# Mirror the blessing stamina so a hacked client can't throw endlessly.
 	# (A little slack for network timing.)
 	var t := now()
-	rec["stamina"] = minf(rec["stamina"] + THROW_REGEN * (t - rec["stamina_time"]), THROW_STAMINA_MAX)
+	var regen := THROW_REGEN * (6.0 if t < rec.get("quick_throw_until", 0.0) else 1.0)
+	rec["stamina"] = minf(rec["stamina"] + regen * (t - rec["stamina_time"]), THROW_STAMINA_MAX)
 	rec["stamina_time"] = t
 	if rec["stamina"] < -THROW_COST:
 		_note_cheat(id, "throwing faster than stamina allows")
@@ -1043,6 +1059,7 @@ func minion_hit(owner: int, _by: Node, damage: int) -> bool:
 		return false
 	var m: Dictionary = minions[owner]
 	m["hp"] -= damage
+	grant_hatred(owner, Skills.NAUGHTY_MINION_HIT, "your minion fooled an angel")
 	print("[host] a minion was hit")
 	if m["hp"] <= 0:
 		_minion_gone(owner, true)
@@ -1105,6 +1122,7 @@ func damage_player(id: int, damage: int, by := 0) -> bool:
 		return false
 	if by != 0:
 		rec["last_hit_by"] = by
+	main.powerups.angels_made_progress()
 	# Health is kept as a fraction, so switching forms keeps your percentage:
 	# the same hit hurts a stack of books (50 hp) more than a hay bale (150 hp).
 	rec["hp"] -= float(damage) / PropLib.max_hp(rec["form"])
@@ -1127,6 +1145,7 @@ func s_you_hit(health_fraction: float) -> void:
 func _catch(id: int) -> void:
 	var rec: Dictionary = peers[id]
 	var where: Vector3 = rec["pos"]
+	main.powerups.demon_caught(where)   # every saved soul drops an angel power-up
 	_minion_gone(id, true)   # a caught demon's minion goes with them
 	main.authority_release(id, where, rec["yaw"])   # a possessed prop stays behind, dissolving
 	_reset_round_mirrors(rec)
@@ -1193,10 +1212,175 @@ func on_local_taunt(taunt_name: String) -> void:
 	if not main.in_online_round():
 		return
 	if is_host:
+		_taunt_bonus(1)
 		for id in _client_ids():
 			s_taunt.rpc_id(id, my_eid, taunt_name)
 	else:
 		c_taunt.rpc_id(1, taunt_name)
+
+
+# ---- Hatred for naughtiness ----
+
+func grant_hatred(id: int, amount: float, reason: String) -> void:
+	if not peers.has(id) or peers[id]["role"] != "demon" or not peers[id]["in_round"]:
+		return
+	peers[id]["hatred"] = minf(peers[id]["hatred"] + amount, HATRED_MAX_MIRROR)   # keep the mirror in step
+	print("[host] %s +%d Hatred: %s" % [peers[id]["name"], int(amount), reason])
+	if id == 1:
+		main.player.add_hatred(amount, reason)
+	else:
+		s_hatred_bonus.rpc_id(id, amount, reason)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_hatred_bonus(amount: float, reason: String) -> void:
+	main.player.add_hatred(clampf(amount, 0.0, 50.0), reason.substr(0, 60))
+
+
+# Taunting with an angel close by is naughty (a little Hatred, at most every 6 s).
+func _taunt_bonus(id: int) -> void:
+	var rec: Dictionary = peers[id]
+	if rec["role"] != "demon" or phase != "hunting" or now() - rec.get("taunt_bonus_at", -100.0) < 6.0:
+		return
+	for other in peers:
+		if peers[other]["in_round"] and peers[other]["role"] == "angel" \
+				and peers[other]["pos"].distance_to(rec["pos"]) <= Skills.NAUGHTY_TAUNT_RANGE:
+			rec["taunt_bonus_at"] = now()
+			grant_hatred(id, Skills.NAUGHTY_TAUNT, "taunting right under an angel's nose")
+			return
+
+
+# ---- Power-ups ----
+
+func team_entries() -> Array:
+	var out := []
+	for id in peers:
+		var rec: Dictionary = peers[id]
+		if not rec["in_round"]:
+			continue
+		if id == 1:
+			out.append([1, main.player, rec["role"]])
+		elif remotes.has(rec["eid"]):
+			out.append([id, remotes[rec["eid"]], rec["role"]])
+	return out
+
+
+func give_powerup(id: int, kind: String) -> void:
+	if not peers.has(id):
+		return
+	var rec: Dictionary = peers[id]
+	var until: float = now() + PowerUps.DURATION.get(kind, 0.0) + 0.5   # (a little slack for the mirrors)
+	match kind:
+		"fast_hatred": rec["fast_hatred_until"] = until
+		"quick_throw": rec["quick_throw_until"] = until
+		"quick_skills": rec["quick_skills_until"] = until
+		"sense": rec["sense_until"] = until
+	print("[host] %s picked up %s" % [rec["name"], kind])
+	if id == 1:
+		main.player.apply_powerup(kind)
+	else:
+		s_powerup.rpc_id(id, kind)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_powerup(kind: String) -> void:
+	if PowerUps.LABELS.has(kind):
+		main.player.apply_powerup(kind)
+
+
+func burn_player(id: int, seconds: float) -> void:
+	if id == 1:
+		main.player.burning = maxf(main.player.burning, seconds)
+	elif peers.has(id):
+		s_burn.rpc_id(id, seconds)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_burn(seconds: float) -> void:
+	main.player.burning = maxf(main.player.burning, clampf(seconds, 0.0, 6.0))
+
+
+# Angels with Cherub Sense: is a demon (or minion) close? Only a yes/no is sent.
+func check_sense() -> void:
+	var demons := demon_nodes()
+	for id in peers:
+		var rec: Dictionary = peers[id]
+		var sensing: bool = rec["in_round"] and rec["role"] == "angel" and now() < rec.get("sense_until", 0.0)
+		var near := false
+		if sensing:
+			for d in demons:
+				if d.global_position.distance_to(rec["pos"]) <= Skills.CHERUB_RADIUS:
+					near = true
+					break
+		if near != rec.get("sense_near", false):
+			rec["sense_near"] = near
+			if id == 1:
+				main.player.sense_alarm = near
+			else:
+				s_sense.rpc_id(id, near)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_sense(near: bool) -> void:
+	main.player.sense_alarm = near
+
+
+# ---- Invisibility and Teleport ----
+
+func set_vanished(id: int, seconds: float) -> void:
+	if not peers.has(id):
+		return
+	var rec: Dictionary = peers[id]
+	rec["vanish_until"] = now() + seconds
+	# Angels stop getting this demon's position at all (no seeing through it with a
+	# hacked game), and their copy of it disappears right away.
+	for viewer in peers:
+		if peers[viewer]["role"] != "angel":
+			continue
+		if viewer == 1:
+			if remotes.has(rec["eid"]):
+				remotes[rec["eid"]].vanish(seconds)
+		else:
+			s_vanish.rpc_id(viewer, rec["eid"], seconds)
+	print("[host] %s vanished" % rec["name"])
+
+
+func _is_vanished(id: int) -> bool:
+	return peers.has(id) and now() < peers[id].get("vanish_until", 0.0)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_vanish(eid: int, seconds: float) -> void:
+	if remotes.has(eid):
+		remotes[eid].vanish(clampf(seconds, 0.0, 10.0))
+
+
+func teleport_player(id: int, dest: Vector3) -> void:
+	if not peers.has(id):
+		return
+	_place(peers[id], dest)
+	if id == 1:
+		main.player.teleport_to(dest)
+	else:
+		s_teleport.rpc_id(id, dest)
+
+
+@rpc("authority", "call_remote", "reliable")
+func s_teleport(dest: Vector3) -> void:
+	main.player.teleport_to(dest)
+
+
+func angel_nodes() -> Array:
+	var out := []
+	for id in peers:
+		var rec: Dictionary = peers[id]
+		if not rec["in_round"] or rec["role"] != "angel":
+			continue
+		if id == 1:
+			out.append(main.player)
+		elif remotes.has(rec["eid"]):
+			out.append(remotes[rec["eid"]])
+	return out
 
 
 func _valid_taunt(role: String, taunt_name: String) -> bool:
@@ -1219,6 +1403,7 @@ func c_taunt(taunt_name: String) -> void:
 	if t - rec["last_taunt"] < 0.5 or not _valid_taunt(rec["role"], taunt_name):
 		return
 	rec["last_taunt"] = t
+	_taunt_bonus(id)
 	if remotes.has(rec["eid"]):
 		remotes[rec["eid"]].play_taunt(taunt_name)
 	for other in _client_ids():
@@ -1393,7 +1578,8 @@ func _skill_allowed(id: int, skill: String, origin: Vector3) -> bool:
 		rec["hatred"] -= cost
 	if skill == "leap":
 		rec["leap_at"] = t
-	rec["skill_ready"][skill] = t + Skills.cooldown(skill)
+	var cd := Skills.cooldown(skill) / (3.0 if t < rec.get("quick_skills_until", 0.0) else 1.0)
+	rec["skill_ready"][skill] = t + cd
 	return true
 
 
@@ -1404,6 +1590,8 @@ func on_local_skill(skill: String, origin: Vector3, dir: Vector3, point: Vector3
 		peers[1]["pos"] = main.player.global_position
 		if _skill_allowed(1, skill, origin):
 			main.authority_skill(main.player, 1, skill, origin, dir.normalized(), point, index)
+		else:
+			print("[host] refused my own %s (phase %s)" % [skill, phase])
 	else:
 		c_skill.rpc_id(1, skill, origin, dir, point, index)
 

@@ -80,7 +80,7 @@ func _ready() -> void:
 
 	# A label over it so people can find it and know what it's for.
 	var sign := Label3D.new()
-	sign.text = "SHRINE\nG: swap skills"
+	sign.text = "SHRINE\n%s: swap skills" % preload("res://scripts/keybinds.gd").key_name("shrine")
 	sign.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	sign.font_size = 48
 	sign.outline_size = 10
