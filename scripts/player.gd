@@ -134,6 +134,7 @@ var _steer_local := Vector2.ZERO   # last direction steered, relative to where w
 var _pull_target := Vector3.ZERO
 var _pull_time := 0.0
 var minion: Node3D = null     # our decoy, if we have one out (main creates it)
+var pick_minion_form: Callable # main: a random prop type that's on the map right now
 var burning := 0.0            # seconds left standing in demon fire (main refreshes it)
 var _move_dir := Vector2.ZERO # last movement keys held (Holy Leap launches that way)
 var _leaping := false         # in the air from Holy Leap: strong steering, Cloud Stomp ready
@@ -570,6 +571,10 @@ func use_skill(slot: int) -> bool:
 			# It appears wherever you're aiming (up to 30 m away), no puff, no sound.
 			var spot := _aim_ray(Skills.MINION_RANGE)
 			point = spot["position"] - dir * 0.3 if not spot.is_empty() else origin + dir * Skills.MINION_RANGE
+			# In our own body it's a copy of us; disguised, it's some prop from this map.
+			index = -1
+			if possessed_type != "" and pick_minion_form.is_valid():
+				index = PropLib.type_names().find(pick_minion_form.call())
 			hatred -= Skills.hatred_cost(id)
 		"possess":
 			if not is_instance_valid(_hover_prop) or not _hover_prop.has_meta("prop_index"):
@@ -864,14 +869,21 @@ func _steer_minion() -> void:
 # a cherub: you slide right off. Standing on a demon disguised as a prop is fine,
 # that's just a prop.
 func _slide_off_heads() -> void:
+	_unpin()
 	for i in get_slide_collision_count():
 		var col := get_slide_collision(i)
-		if col.get_normal().y < 0.6:
-			continue
 		var other := col.get_collider()
 		if other == null:
 			continue
-		var on_body: bool = other.get("eid") != null and other.get("form") == ""
+		# Someone (or a cherub) on OUR head: we don't feel them, so we can walk out
+		# from under (they drop off on their own screen once we're gone).
+		if col.get_normal().y < -0.5 and _is_someone(other):
+			add_collision_exception_with(other)
+			_pinned_by[other] = true
+			continue
+		if col.get_normal().y < 0.6:
+			continue
+		var on_body: bool = (other.get("eid") != null or other.get("life") != null) and other.get("form") == ""
 		if on_body or other.get("cherub_id") != null:
 			var away := Vector3(global_position.x - other.global_position.x, 0.0, global_position.z - other.global_position.z)
 			if away.length() < 0.05:
@@ -882,6 +894,25 @@ func _slide_off_heads() -> void:
 			velocity.y = minf(velocity.y, -1.0)
 			global_position += away * 0.06
 			return
+
+
+var _pinned_by := {}   # bodies we're letting pass through because they were on our head
+
+
+func _is_someone(n: Object) -> bool:
+	return n.get("eid") != null or n.get("life") != null or n.get("cherub_id") != null
+
+
+# Once whoever was on our head is clear of us, we can bump into them again.
+func _unpin() -> void:
+	for n in _pinned_by.keys():
+		if not is_instance_valid(n):
+			_pinned_by.erase(n)
+			continue
+		var off: Vector3 = n.global_position - global_position
+		if Vector2(off.x, off.z).length() > 1.4 or off.y > 3.0 or off.y < -1.0:
+			remove_collision_exception_with(n)
+			_pinned_by.erase(n)
 
 
 # Which way our body or prop faces, as everyone else should see it.

@@ -10,6 +10,9 @@ var failures := 0
 
 
 func _initialize() -> void:
+	# Same prop layout and bot spots every run, so a test never fails just
+	# because a random prop happened to land in the way.
+	seed(int(OS.get_environment("TEST_SEED")) if OS.get_environment("TEST_SEED") != "" else 20261114)
 	main = load("res://main.tscn").instantiate()
 	root.add_child(main)
 	_run.call_deferred()
@@ -712,6 +715,39 @@ func _run() -> void:
 			hits_to_pop += 1
 		check(hits_to_pop == 2, "...flimsy: pops after 2 blessings (a real demon takes 4)")
 	player.pivot.rotation.x = 0.0
+
+	# Disguised as a prop, the minion is some other prop that's on this map.
+	var prop_types_on_map := []
+	for pr in main.props:
+		if is_instance_valid(pr) and pr.has_meta("prop_type"):
+			prop_types_on_map.append(pr.get_meta("prop_type"))
+	player.force_possess("crate")
+	player.skill_cd.clear()
+	player.hatred = 100.0
+	await frames(3)
+	check(player.use_skill(0), "Minion while disguised")
+	await frames(2)
+	check(is_instance_valid(player.minion) and player.minion.form in prop_types_on_map,
+			"...is a prop that's really on this map (%s)" % (player.minion.form if is_instance_valid(player.minion) else "none"))
+	if is_instance_valid(player.minion):
+		player.minion.queue_free()
+	player.unpossess()
+
+	# Something standing on your head doesn't pin you: you walk out from under it.
+	var sitter = load("res://scripts/cherub.gd").new()
+	main.round_root.add_child(sitter)
+	player.global_position = clear_spot(Vector3(12, 0.1, 18))
+	player.velocity = Vector3.ZERO
+	await frames(10)
+	sitter.launch(player.global_position + Vector3.UP * 2.6, Vector3.ZERO)
+	await frames(30)
+	var pinned_at: Vector3 = player.global_position
+	player.test_input = {"dir": Vector2(1, 0)}
+	await frames(40)
+	player.test_input = {}
+	check(Vector2(player.global_position.x - pinned_at.x, player.global_position.z - pinned_at.z).length() > 1.5,
+			"something on your head doesn't pin you in place")
+	sitter.queue_free()
 
 	# Angels: the mouse turns you (unless you hold Alt).
 	player.set_role("angel")

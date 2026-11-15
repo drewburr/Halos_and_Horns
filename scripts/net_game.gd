@@ -484,6 +484,8 @@ func _end_round(message: String) -> void:
 	print("[host] joined players' throws: " + ", ".join(stats))
 	phase = "ended"
 	phase_time = END_SCREEN_TIME
+	for owner in minions.keys():   # the round's over: no minions wandering about
+		_minion_gone(owner, true)
 	main.online_round_end(message)
 	for id in _client_ids():
 		s_round_end.rpc_id(id, message)
@@ -986,7 +988,7 @@ func _minion_owner(eid: int) -> int:
 	return 0
 
 
-func minion_spawned(owner: int, point: Vector3) -> void:
+func minion_spawned(owner: int, point: Vector3, form_index: int) -> void:
 	if not peers.has(owner):
 		return
 	if minions.has(owner):
@@ -996,8 +998,13 @@ func minion_spawned(owner: int, point: Vector3) -> void:
 		if owner != 1:
 			s_minion_gone.rpc_id(owner)   # too far away: no minion
 		return
+	# A copy of their own body, or (disguised) a kind of prop that's really on this map.
+	var types: Array = PropLib.type_names()
+	var form := ""
+	if form_index >= 0 and form_index < types.size() and main.map_has_prop_type(types[form_index]):
+		form = types[form_index]
 	var m := {"eid": _new_eid(), "pos": main.ground_below(point + Vector3.UP), "yaw": rec["yaw"],
-		"form": rec["form"], "hp": PropLib.max_hp(rec["form"]) * Skills.MINION_HEALTH, "until": now() + Skills.MINION_LIFETIME, "last_time": now()}
+		"form": form, "hp": PropLib.max_hp(rec["form"]) * Skills.MINION_HEALTH, "until": now() + Skills.MINION_LIFETIME, "last_time": now()}
 	minions[owner] = m
 	if owner != 1:
 		var r := _get_or_make_remote(m["eid"])
@@ -1120,6 +1127,7 @@ func s_you_hit(health_fraction: float) -> void:
 func _catch(id: int) -> void:
 	var rec: Dictionary = peers[id]
 	var where: Vector3 = rec["pos"]
+	_minion_gone(id, true)   # a caught demon's minion goes with them
 	main.authority_release(id, where, rec["yaw"])   # a possessed prop stays behind, dissolving
 	_reset_round_mirrors(rec)
 	rec["role"] = "angel"

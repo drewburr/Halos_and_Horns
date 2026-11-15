@@ -9,6 +9,9 @@ var failures := 0
 
 
 func _initialize() -> void:
+	# Same prop layout and bot spots every run, so a test never fails just
+	# because a random prop happened to land in the way.
+	seed(int(OS.get_environment("TEST_SEED")) if OS.get_environment("TEST_SEED") != "" else 20261114)
 	main = load("res://main.tscn").instantiate()
 	root.add_child(main)
 	_run.call_deferred()

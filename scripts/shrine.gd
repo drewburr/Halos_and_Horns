@@ -78,6 +78,17 @@ func _ready() -> void:
 	_pillar.visible = false
 	add_child(_pillar)
 
+	# A label over it so people can find it and know what it's for.
+	var sign := Label3D.new()
+	sign.text = "SHRINE\nG: swap skills"
+	sign.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	sign.font_size = 48
+	sign.outline_size = 10
+	sign.pixel_size = 0.01
+	sign.modulate = Color(1.0, 0.93, 0.7)
+	sign.position.y = 2.7
+	add_child(sign)
+
 	_voice = AudioStreamPlayer3D.new()
 	_voice.bus = Sfx.BUS
 	_voice.unit_size = 12.0

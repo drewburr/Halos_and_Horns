@@ -111,6 +111,9 @@ func _physics_process(delta: float) -> void:
 		var col := get_slide_collision(i)
 		var other := col.get_collider()
 		var is_someone: bool = other != null and (other is CharacterBody3D or other.get("eid") != null or other.is_in_group("demon"))
+		# A demon disguised as a prop is just a prop here (anything else would give it away).
+		if is_someone and (str(other.get("form")) not in ["", "<null>"] or str(other.get("possessed_type")) not in ["", "<null>"] or other.is_in_group("demon")):
+			is_someone = false
 		if col.get_normal().y > 0.6 and is_someone:
 			var away := Vector3(global_position.x - other.global_position.x, 0.0, global_position.z - other.global_position.z)
 			if away.length() < 0.05:

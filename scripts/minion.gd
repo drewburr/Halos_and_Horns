@@ -108,6 +108,24 @@ func _physics_process(delta: float) -> void:
 			_hop_timer = randf_range(2.5, 6.0)
 		_stuck_time = _stuck_time + delta if is_on_wall() else 0.0
 	move_and_slide()
+	# Never stand on anyone's head: hop off sideways (same as players do).
+	for i in get_slide_collision_count():
+		var col := get_slide_collision(i)
+		var other := col.get_collider()
+		if other == null or col.get_normal().y < 0.6:
+			continue
+		var someone: bool = other is CharacterBody3D or other.get("eid") != null or other.is_in_group("demon")
+		if someone and (str(other.get("form")) not in ["", "<null>"] or str(other.get("possessed_type")) not in ["", "<null>"]):
+			someone = false   # a demon disguised as a prop is just a prop: fine to stand on
+		if someone:
+			var away := Vector3(global_position.x - other.global_position.x, 0.0, global_position.z - other.global_position.z)
+			if away.length() < 0.05:
+				away = Vector3.RIGHT
+			away = away.normalized()
+			velocity.x = away.x * 4.0
+			velocity.z = away.z * 4.0
+			global_position += away * 0.06
+			break
 
 
 # Waiting around: little turns, and every so often a few steps somewhere.

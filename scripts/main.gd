@@ -82,6 +82,7 @@ var _shrine_pick := ["", ""]
 var _shrine_elapsed := 0.0      # seconds since this swap started
 var _shrine_done := false       # picked and confirmed; waiting out the rest of the 3 s
 var _shrine_status: Label
+var _was_at_shrine := false   # just walked up to the shrine: show how to use it
 var chat_box: VBoxContainer     # recent chat lines, bottom left
 var chat_edit: LineEdit
 var chat_team_only := false
@@ -187,6 +188,7 @@ func _ready() -> void:
 	player.launched.connect(_on_player_launched)
 	player.hit_taken.connect(_on_player_hit_taken)
 	player.skill_used.connect(_on_player_skill)
+	player.pick_minion_form = random_map_prop_type
 	player.melee_used.connect(_on_player_melee)
 	player.released_possessed.connect(_on_player_released)
 	_build_tuning_panel()
@@ -1063,8 +1065,8 @@ func start_round() -> void:
 
 func _controls_text() -> String:
 	var common := "WASD move   Shift run   Ctrl sneak   Space jump   1 / 2 taunt   T first/third person"
-	var side := "Left click throw   Q / Right click skills   F melee   B blessing (testing)" if role == "angel" \
-			else "Click a prop: transform   Hold click: demon form   Q / Right click skills (hold Fly to rise)"
+	var side := "Left click throw   Q / Right click skills   F melee   G swap skills (at the shrine)   B blessing (testing)" if role == "angel" \
+			else "Click a prop: transform   Hold click: demon form   Q / Right click skills (hold Fly to rise)   G swap skills (at the shrine)"
 	if mode == "practice":
 		return common + "\n" + side + "   F2 switch side   R restart   F1 movement tuning   Esc menu"
 	return common + "\n" + side + "   Tab roster   F1 movement tuning   Esc menu"
@@ -1257,6 +1259,8 @@ func online_caught_fx(pos: Vector3) -> void:
 func online_round_end(message: String) -> void:
 	state = State.ENDED
 	player.frozen = true
+	if is_instance_valid(player.minion):
+		player.minion.queue_free()
 	_toast(message + "\nBack to the lobby in a few seconds...", 9999.0)
 
 
@@ -1302,7 +1306,7 @@ func is_authority() -> bool:
 
 func _on_player_skill(id: String, origin: Vector3, dir: Vector3, point: Vector3, index: int) -> void:
 	if id == "minion":
-		_spawn_my_minion(point)
+		_spawn_my_minion(point, index)
 	if mode == "practice":
 		authority_skill(player, 0, id, origin, dir, point, index)
 	elif net:
@@ -1313,12 +1317,29 @@ func _on_player_skill(id: String, origin: Vector3, dir: Vector3, point: Vector3,
 		net.on_local_skill(id, origin, dir, point, index)
 
 
+# A random kind of prop that's standing somewhere on the map right now.
+func random_map_prop_type() -> String:
+	var kinds := []
+	for prop in props:
+		if is_instance_valid(prop) and prop.visible and prop.has_meta("prop_type") and not prop.get_meta("prop_type") in kinds:
+			kinds.append(prop.get_meta("prop_type"))
+	return kinds.pick_random() if not kinds.is_empty() else "crate"
+
+
+func map_has_prop_type(type_name: String) -> bool:
+	for prop in props:
+		if is_instance_valid(prop) and prop.has_meta("prop_type") and prop.get_meta("prop_type") == type_name:
+			return true
+	return false
+
+
 # Our own decoy: we run it (we steer it); the host shows it to everyone else.
-func _spawn_my_minion(at: Vector3) -> void:
+func _spawn_my_minion(at: Vector3, form_index: int) -> void:
 	if is_instance_valid(player.minion):
 		player.minion.queue_free()
 	var m := Minion.new()
-	m.form = player.possessed_type
+	var types: Array = PropLib.type_names()
+	m.form = types[form_index] if form_index >= 0 and form_index < types.size() else ""
 	m.fall_gravity = player.gravity * player.tuning["gravity_scale"]
 	m.jump_velocity = player.tuning["jump_velocity"]
 	round_root.add_child(m)
@@ -1385,7 +1406,7 @@ func authority_skill(user: Node3D, user_key: int, id: String, origin: Vector3, d
 	match id:
 		"minion":
 			if net and net.is_host:
-				net.minion_spawned(user_key, point)
+				net.minion_spawned(user_key, point, index)
 		"cherub":
 			# Thrown from the angel's hands; where it ends up is up to physics.
 			_cherub_counter += 1
@@ -2173,6 +2194,12 @@ func _toast(text: String, seconds: float) -> void:
 
 
 func _update_hud(delta: float) -> void:
+	# Standing at the shrine: say how to use it.
+	var at_shrine := (state == State.HIDING or state == State.HUNTING) and near_shrine(player.global_position) \
+			and not player.frozen
+	if at_shrine and not _was_at_shrine and not shrine_panel.visible:
+		_toast("Press G to swap your skills" + (" (leave your prop first)" if player.possessed_type != "" else ""), 2.5)
+	_was_at_shrine = at_shrine
 	var want_board := mode != "menu" and Input.is_action_pressed("scoreboard") \
 			and not pause_panel.visible and not menu_panel.visible
 	if want_board and not scoreboard_panel.visible:
