@@ -61,6 +61,14 @@ func _physics_process(delta: float) -> void:
 		_rounds_started += 1
 		log_line("starting the round with %d players" % main.net.peers.size())
 		main.net.start_round()
+	# Host, testing: hand one joined angel Cherub Sense 3 s into the hunt (--give-sense).
+	if main.net and main.net.is_host and options.has("give-sense") and not _used.has("give-sense") \
+			and main.state == main.State.HUNTING and main.time_left < main.net.hunt_time - 3.0:
+		for id in main.net.peers:
+			if id != 1 and main.net.peers[id]["role"] == "angel" and main.net.peers[id]["in_round"]:
+				_used["give-sense"] = true
+				main.give_powerup(id, "sense", Vector3.ZERO)
+				break
 	# Quit a couple of seconds after the round ends (--quit-after-round).
 	if main.state == main.State.ENDED and not _logged_end:
 		_logged_end = true

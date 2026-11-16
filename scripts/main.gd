@@ -23,6 +23,8 @@ const Bouncy = preload("res://scripts/bouncy.gd")
 const Shrine = preload("res://scripts/shrine.gd")
 const MapData = preload("res://scripts/map_data.gd")
 const Editor = preload("res://scripts/editor.gd")
+const SenseCherub = preload("res://scripts/sense_cherub.gd")
+const Bodies = preload("res://scripts/bodies.gd")
 # The current map's layout (filled in by load_map from the map file).
 var map_data := {}
 var map_path := ""
@@ -97,6 +99,7 @@ var skill_label: Label
 var bonus_label: Label
 var powerup_label: Label
 var _sense_bubble: MeshInstance3D
+var _sense_cherub: Node3D          # Cherub Sense: the little cherub dangling above our head
 var _sense_sound_time := 0.0
 var _bonus_time := 0.0
 var shrine: Node3D
@@ -2070,6 +2073,10 @@ func give_powerup(user_key: int, kind: String, where: Vector3) -> void:
 		player.apply_powerup(kind)
 	elif net:
 		net.give_powerup(user_key, kind)
+		if kind == "sense" and net.peers.has(user_key):
+			# Teammates see the little cherub over their head too (demons don't).
+			var who: int = net.my_eid if user_key == 1 else net.peers[user_key]["eid"]
+			team_fx("angel", "sense_cherub", [who, PowerUps.DURATION["sense"]])
 
 
 # Cherub Sense: a red bubble pulses around you and the horn blares while a demon is close.
@@ -2087,6 +2094,18 @@ func _update_sense_bubble(delta: float) -> void:
 		mat.albedo_color = Color(1.0, 0.15, 0.1, 0.12)
 		_sense_bubble.material_override = mat
 		player.add_child(_sense_bubble)
+	# The cherub over our head, for as long as the power-up lasts.
+	var sensing: bool = mode in ["practice", "online"] and player.role == "angel" and player.powerup_left("sense") > 0.0
+	if sensing and not is_instance_valid(_sense_cherub):
+		_sense_cherub = SenseCherub.new()
+		player.add_child(_sense_cherub)
+		# (a touch in front, so looking up shows it even in first person)
+		_sense_cherub.position = Vector3(0, Bodies.height_for("angel") + SenseCherub.ABOVE_HEAD, -0.25)
+	elif not sensing and is_instance_valid(_sense_cherub):
+		_sense_cherub.queue_free()
+		_sense_cherub = null
+	if is_instance_valid(_sense_cherub):
+		_sense_cherub.alarmed = player.sense_alarm
 	_sense_bubble.visible = player.sense_alarm
 	if player.sense_alarm:
 		var tt := Time.get_ticks_msec() / 1000.0
@@ -2300,6 +2319,19 @@ func fx(kind: String, args: Array) -> void:
 			fires[args[0]] = f
 		"kick":
 			Effects.puff(_fx_parent(), args[0], Color(1.0, 0.95, 0.6, 0.8), 1.2)
+		"sense_cherub":
+			# A teammate picked up Cherub Sense: hang a cherub over their head.
+			if net and net.remotes.has(args[0]):
+				var r: Node3D = net.remotes[args[0]]
+				var old := r.get_node_or_null("SenseCherub")
+				if old:
+					old.free()
+				var c := SenseCherub.new()
+				c.name = "SenseCherub"
+				c.life = clampf(float(args[1]), 0.0, 30.0)
+				r.add_child(c)
+				c.position.y = Bodies.height_for("angel") + SenseCherub.ABOVE_HEAD
+				print("[fx] a cherub over a teammate's head")
 		"fear":
 			for i in 12:
 				var a := TAU * i / 12.0

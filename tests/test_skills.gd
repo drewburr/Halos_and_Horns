@@ -965,6 +965,20 @@ func _run() -> void:
 	check(not is_equal_approx(player.rotation.y, body_yaw) and is_zero_approx(player.pivot.rotation.y),
 			"angel: the mouse turns you, so the crosshair stays true")
 
+	# Cherub Sense: a little cherub dangles over the angel's head while it lasts.
+	main.role = "angel"
+	player.apply_powerup("sense")
+	await frames(3)
+	var sc = main._sense_cherub
+	check(is_instance_valid(sc) and sc.get_parent() == player and sc.position.y > 1.8, "Cherub Sense: a cherub dangles above the angel's head")
+	player.sense_alarm = true
+	await frames(2)
+	check(sc.alarmed, "...and goes frantic when a demon is close")
+	player.sense_alarm = false
+	player.powerups["sense"] = 0.01
+	await frames(5)
+	check(not is_instance_valid(main._sense_cherub) or main._sense_cherub == null, "...and goes away when the power-up runs out")
+
 	# Fear: angels near a shrieking demon (who can see it) scatter, and can't attack.
 	main.role = "angel"
 	main.state = main.State.HUNTING
