@@ -3,7 +3,7 @@
 A free, non-commercial prop-hunt game: demons possess everyday objects to hide, angels hunt them down.
 Passion project, inspired by Witch It.
 
-## Status: version 0.5.3, Creative mode, Godot 4.7
+## Status: version 0.5.4, Creative mode, Godot 4.7
 
 One small test map (the Playground), placeholder shapes for everything, and Creative mode for building your own.
 
