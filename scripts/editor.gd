@@ -3,7 +3,8 @@
 # Fly around: hold the right mouse button to look, WASD to move, Space / E up,
 # Ctrl / Q down, Shift to go faster, mouse wheel to zoom.
 # Pick a piece on the left, then click in the world to put it there.
-# Click a piece to select it, then:
+# Click a piece to select it, or press on it and drag to move it around (it slides
+# over whatever's under the cursor: ground, roofs, other pieces). Or, once selected:
 #   G move   R rotate   T resize (blocks and cylinders)
 #     while doing it: X / Y / Z stick to one axis, L local or world axes,
 #     hold Alt for no snapping, click or Enter to finish, Esc or right-click to undo it
@@ -60,6 +61,10 @@ var _drag_piece := {}
 var _drag_mouse := Vector2.ZERO
 var _drag_offset := Vector3.ZERO
 var _drag_t0 := 0.0
+var _surface := false          # moving by grabbing with the mouse: it follows whatever's under the cursor
+var _grabbing := false         # ...and the button's still held (letting go drops it)
+var _press_piece := -1         # the piece the left button went down on (dragging it grabs it)
+var _press_at := Vector2.ZERO
 var _confirm := ""             # a button waiting for a second click ("exit", "save")
 var _lines: ImmediateMesh
 var _boxes := {}               # piece index -> local AABB (for the selection outline)
@@ -532,6 +537,7 @@ func begin(kind: String) -> void:
 
 func set_axis(a: String) -> void:
 	axis = "" if axis == a else a
+	_surface = false   # an axis means exact: stop following surfaces
 	if drag == "move":
 		_start_move_ray()
 
@@ -581,7 +587,14 @@ func drag_update(ray_from: Vector3, ray_dir: Vector3, mouse_pos: Vector2) -> voi
 	match drag:
 		"move":
 			var pos := start
-			if axis == "":
+			if axis == "" and _surface:
+				# Follow whatever's under the cursor (ground, roofs, other pieces), resting on top of it.
+				var on := _surface_point(ray_from, ray_dir)
+				pos = Vector3(on.x + _drag_offset.x, on.y + _rest_height(p), on.z + _drag_offset.z)
+				if snap:
+					pos.x = snappedf(pos.x, grid)
+					pos.z = snappedf(pos.z, grid)
+			elif axis == "":
 				var hit = Plane(Vector3.UP, start.y).intersects_ray(ray_from, ray_dir)
 				if hit == null:
 					return
@@ -625,7 +638,47 @@ func drag_update(ray_from: Vector3, ray_dir: Vector3, mouse_pos: Vector2) -> voi
 	_sync_inspector()
 
 
+# Grab the selected piece with the mouse: it follows the surface under the cursor.
+func grab(ray_from: Vector3, ray_dir: Vector3) -> void:
+	begin("move")
+	if drag != "move":
+		return
+	_surface = true
+	_grabbing = true
+	var start := MapData.vec(_drag_piece["pos"])
+	var on := _surface_point(ray_from, ray_dir)
+	_drag_offset = Vector3(start.x - on.x, 0.0, start.z - on.z)
+	_say("Dragging: let go to drop it. X / Y / Z lock to one axis, Alt no snap, Esc or right-click to cancel.", 999.0)
+
+
+# Where the cursor ray lands, ignoring the piece being moved (or the ground if it misses everything).
+func _surface_point(ray_from: Vector3, ray_dir: Vector3) -> Vector3:
+	var q := PhysicsRayQueryParameters3D.create(ray_from, ray_from + ray_dir * 500.0)
+	q.collision_mask = 1
+	var skip := []
+	if selected >= 0 and selected < nodes.size() and is_instance_valid(nodes[selected]):
+		for c in nodes[selected].find_children("*", "CollisionObject3D", true, false):
+			skip.append(c.get_rid())
+	q.exclude = skip
+	var hit := root.get_world_3d().direct_space_state.intersect_ray(q)
+	if not hit.is_empty():
+		return hit["position"]
+	var g = Plane(Vector3.UP, 0.0).intersects_ray(ray_from, ray_dir)
+	return g if g != null else ray_from + ray_dir * 10.0
+
+
+# How high a piece's position sits above what it's standing on.
+func _rest_height(p: Dictionary) -> float:
+	if p["type"] in ["block", "cylinder"]:
+		return float(p["size"][1]) / 2.0
+	if p["type"] in ["angel_spawn", "demon_spawn"]:
+		return 0.1
+	return 0.0
+
+
 func _end_drag(keep: bool) -> void:
+	_surface = false
+	_grabbing = false
 	if drag == "":
 		return
 	var before := _drag_before
@@ -671,6 +724,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().gui_release_focus()
 			_click(mb.position)
 			get_viewport().set_input_as_handled()
+		elif mb.button_index == MOUSE_BUTTON_LEFT and not mb.pressed:
+			_press_piece = -1
+			if _grabbing:
+				_end_drag(true)   # let go: drop it there
+			get_viewport().set_input_as_handled()
 		elif mb.pressed and mb.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 			var step := 2.0 * (3.0 if mb.shift_pressed else 1.0)
 			camera.position += -camera.global_basis.z * (step if mb.button_index == MOUSE_BUTTON_WHEEL_UP else -step)
@@ -682,6 +740,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			_pitch = clampf(_pitch - mm.relative.y * 0.004, -1.55, 1.55)
 			camera.rotation = Vector3(_pitch, _yaw, 0)
 		elif drag != "":
+			var r := _mouse_ray(mm.position)
+			drag_update(r[0], r[1], mm.position)
+		elif _press_piece >= 0 and _press_piece == selected and mm.position.distance_to(_press_at) > 6.0 \
+				and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+			# Pressed on a piece and moved: pick it up.
+			_press_piece = -1
+			var r0 := _mouse_ray(_press_at)
+			grab(r0[0], r0[1])
 			var r := _mouse_ray(mm.position)
 			drag_update(r[0], r[1], mm.position)
 	elif event is InputEventKey and event.pressed and not event.echo:
@@ -741,6 +807,8 @@ func _click(at: Vector2) -> void:
 			_say("Placed. (Hold Shift while clicking to place several.)", 3.0)
 		return
 	select(_piece_under(at))
+	_press_piece = selected
+	_press_at = at
 
 
 func _toggle_local() -> void:
@@ -1192,4 +1260,4 @@ func _say(text: String, seconds: float) -> void:
 
 
 func _help_text() -> String:
-	return "Hold right mouse: look   WASD: fly   Space/E up   Q down   Shift faster   Click: select   G move   R rotate   T resize   Ctrl+D copy   Del remove   F fly to it   Ctrl+Z undo   Ctrl+S save"
+	return "Hold right mouse: look   WASD: fly   Space/E up   Q down   Shift faster   Click: select   Drag: move it   G move   R rotate   T resize   Ctrl+D copy   Del remove   F fly to it   Ctrl+Z undo   Ctrl+S save"

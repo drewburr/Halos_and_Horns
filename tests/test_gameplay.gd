@@ -405,6 +405,20 @@ func _run() -> void:
 	ed.drag_update(Vector3(20, 30, 20), Vector3.DOWN, Vector2.ZERO)
 	ed._end_drag(false)
 	check(is_equal_approx(ed.map["pieces"][bi]["pos"][0], 7.5), "...Esc cancels a move")
+	# Grabbing with the mouse: the pickle slides over whatever's under the cursor, even up onto the block.
+	ed.select(pi)
+	await frames(2)   # (the physics world catches up with the resized block)
+	ed.grab(Vector3(-3, 30, 2), Vector3.DOWN)
+	ed.drag_update(Vector3(-1.2, 30, 6.3), Vector3.DOWN, Vector2.ZERO)
+	var gp: Array = ed.map["pieces"][pi]["pos"]
+	check(is_equal_approx(gp[0], -1.0) and is_equal_approx(gp[2], 6.5) and absf(gp[1]) < 0.05, "...dragging a piece with the mouse moves it across the ground (%s)" % str(gp))
+	var block_top: float = ed.map["pieces"][bi]["pos"][1] + ed.map["pieces"][bi]["size"][1] / 2.0
+	ed.drag_update(Vector3(7.5, 30, 4), Vector3.DOWN, Vector2.ZERO)
+	gp = ed.map["pieces"][pi]["pos"]
+	check(is_equal_approx(gp[1], block_top), "...and up onto a block's roof (%s, roof at %.2f)" % [str(gp), block_top])
+	ed._end_drag(true)
+	ed.undo()
+	check(ed.map["pieces"][pi]["pos"] == [-3.0, 0.0, 2.0], "...and undo puts it back")
 	var n_before: int = ed.map["pieces"].size()
 	ed.select(bi)
 	var di: int = ed.duplicate_selected()

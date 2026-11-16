@@ -3,11 +3,11 @@
 A free, non-commercial prop-hunt game: demons possess everyday objects to hide, angels hunt them down.
 Passion project, inspired by Witch It.
 
-## Status: version 0.5.4, Creative mode, Godot 4.7
+## Status: version 0.5.5, Creative mode, Godot 4.7
 
 One small test map (the Playground), placeholder shapes for everything, and Creative mode for building your own.
 
-- **Creative (build maps):** from the main menu. Hold right mouse to look around, WASD to fly (Space/E up, Q down, Shift faster). Pick a piece on the left (blocks, cylinders, every prop, bouncies, the shrine, the angel and demon starts) and click in the world to place it. Click a piece to select it, then G move, R rotate, T resize; while doing that, X / Y / Z keep it to one axis, L switches between the map's axes and the piece's own, and holding Alt turns snapping off. Ctrl+D copies, Delete removes, F flies to it, Ctrl+Z / Ctrl+Y undo and redo. The right-hand panel takes exact numbers; 0, 0, 0 is the middle of the map. Save, then **Test play** to run a round on it, and Esc → Back to Creative to keep building.
+- **Creative (build maps):** from the main menu. Hold right mouse to look around, WASD to fly (Space/E up, Q down, Shift faster). Pick a piece on the left (blocks, cylinders, every prop, bouncies, the shrine, the angel and demon starts) and click in the world to place it. Click a piece to select it; press on it and drag to move it (it slides over whatever is under the cursor, so you can drag things onto roofs), or use G move, R rotate, T resize; while doing that, X / Y / Z keep it to one axis, L switches between the map's axes and the piece's own, and holding Alt turns snapping off. Ctrl+D copies, Delete removes, F flies to it, Ctrl+Z / Ctrl+Y undo and redo. The right-hand panel takes exact numbers; 0, 0, 0 is the middle of the map. Save, then **Test play** to run a round on it, and Esc → Back to Creative to keep building.
 - **Maps** are plain data files (no code, so a map can't do anything but be a map), saved in your maps folder (Creative has a button that opens it). The host picks the map in the lobby; everyone who joins gets it automatically.
 
 - **Practice:** single player. The angel side hunts 3 test demons (they hop and taunt so you can find them); the demon side is a sandbox for possessing props.
