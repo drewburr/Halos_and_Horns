@@ -10,15 +10,15 @@ GODOT="${GODOT:-godot}"
 OUT="$(mktemp -d)"
 cd "$(dirname "$0")/.."
 
-"$GODOT" --headless -- --host --name=Theo --autobot --give-sense --autostart=5 --hide=14 --hunt=150 --quit-after-round --skills=possess,fear \
-	--roles=Theo:demon,Wife:angel,Brother:demon,Squirrel:angel,Oddy:demon > "$OUT/host.log" 2>&1 &
+"$GODOT" --headless -- --host --name=Abe --autobot --give-sense --autostart=5 --hide=14 --hunt=150 --quit-after-round --skills=possess,fear \
+	--roles=Abe:demon,Ava:angel,Ben:demon,Cal:angel,Dee:demon > "$OUT/host.log" 2>&1 &
 sleep 3
-for n in Wife Brother Squirrel Oddy; do
+for n in Ava Ben Cal Dee; do
 	extra=""
-	[ "$n" = "Oddy" ] && extra="--cheat=teleport,fly --skills=teleport,fly"
-	[ "$n" = "Wife" ] && extra="--skills=cherub,vacuum --say=hello_everyone --cheat=claim"
-	[ "$n" = "Squirrel" ] && extra="--skills=dash,leap"
-	[ "$n" = "Brother" ] && extra="--skills=fire,minion --sayteam=demons_only_secret"
+	[ "$n" = "Dee" ] && extra="--cheat=teleport,fly --skills=teleport,fly"
+	[ "$n" = "Ava" ] && extra="--skills=cherub,vacuum --say=hello_everyone --cheat=claim"
+	[ "$n" = "Cal" ] && extra="--skills=dash,leap"
+	[ "$n" = "Ben" ] && extra="--skills=fire,minion --sayteam=demons_only_secret"
 	timeout 240 "$GODOT" --headless -- --join=127.0.0.1 --name=$n --autobot --quit-after-round $extra > "$OUT/$n.log" 2>&1 &
 	sleep 0.5
 done
@@ -33,30 +33,30 @@ check "round started with 5 players" "grep -q 'round started: 2 angel(s), 3 demo
 end_msg=$(grep -m1 -oE "round over: .*" "$OUT/host.log" | sed 's/round over: //')
 check "round ended ($end_msg)" "[ -n \"$end_msg\" ]"
 check "at least one demon was caught" "grep -q 'was caught' '$OUT/host.log'"
-for n in Wife Brother Squirrel Oddy; do
+for n in Ava Ben Cal Dee; do
 	check "$n saw the same result as the host" "grep -qF \"round over: $end_msg\" '$OUT/$n.log'"
 	if grep -q "\\[host\\] $n was caught" "$OUT/host.log"; then
 		check "$n was caught and switched to the angel side" "grep -q 'now playing as angel' '$OUT/$n.log'"
 	fi
 done
-check "flying without Hatred was caught" "grep -q 'blocked Oddy: flying without enough Hatred' '$OUT/host.log'"
-check "no false alarms (only Oddy was flagged)" "! grep '^\\[host\\] blocked' '$OUT/host.log' | grep -qv 'blocked Oddy'"
-check "demons flew" "grep -q 'flying' '$OUT/Brother.log' '$OUT/Theo.log' '$OUT/Oddy.log'"
+check "flying without Hatred was caught" "grep -q 'blocked Dee: flying without enough Hatred' '$OUT/host.log'"
+check "no false alarms (only Dee was flagged)" "! grep '^\\[host\\] blocked' '$OUT/host.log' | grep -qv 'blocked Dee'"
+check "demons flew" "grep -q 'flying' '$OUT/Ben.log' '$OUT/Abe.log' '$OUT/Dee.log'"
 check "a demon possessed a real prop" "grep -q 'a demon possessed a' '$OUT/host.log'"
 check "an angel dropped an Alarm Cherub" "grep -q 'cherub dropped' '$OUT/host.log'"
 check "an angel threw a Vacuum Orb" "grep -q 'vacuum orb' '$OUT/host.log'"
-check "an angel used the Flying Dash" "grep -q 'used dash' '$OUT/Squirrel.log'"
-if grep -q 'used fire' "$OUT/Brother.log"; then
+check "an angel used the Flying Dash" "grep -q 'used dash' '$OUT/Cal.log'"
+if grep -q 'used fire' "$OUT/Ben.log"; then
 	check "a demon flung Hellfire" "grep -q 'hellfire lit' '$OUT/host.log'"
 fi
-check "an angel used Holy Leap" "grep -q 'used leap' '$OUT/Squirrel.log'"
+check "an angel used Holy Leap" "grep -q 'used leap' '$OUT/Cal.log'"
 # (only if the stomp landed before the round ended)
-if sed '/round over/q' "$OUT/Squirrel.log" | grep -q 'used stomp'; then
+if sed '/round over/q' "$OUT/Cal.log" | grep -q 'used stomp'; then
 	check "...and the host handled the Cloud Stomp" "grep -q 'cloud stomp hit' '$OUT/host.log'"
 fi
-check "the roster shows chosen skills" "grep -q 'Wife(angel,[0-9]*ms,Alarm Cherub+Vacuum Orb)' '$OUT/Brother.log'"
-check "out-of-bounds teleport was blocked" "grep -q 'blocked Oddy: out of bounds' '$OUT/host.log'"
-x=$(grep -oE 'after cheat, position x = -?[0-9.]+' "$OUT/Oddy.log" | grep -oE -- '-?[0-9.]+$')
+check "the roster shows chosen skills" "grep -q 'Ava(angel,[0-9]*ms,Alarm Cherub+Vacuum Orb)' '$OUT/Ben.log'"
+check "out-of-bounds teleport was blocked" "grep -q 'blocked Dee: out of bounds' '$OUT/host.log'"
+x=$(grep -oE 'after cheat, position x = -?[0-9.]+' "$OUT/Dee.log" | grep -oE -- '-?[0-9.]+$')
 check "cheater was snapped back inside the map (x=$x)" "awk -v x=\"$x\" 'BEGIN { exit !(x != \"\" && x < 28.5 && x > -28.5) }'"
 # Name leaks: only angels see names, and only their fellow angels'.
 leaks=$(grep -h "names I can see" "$OUT"/*.log | awk '{
@@ -67,34 +67,34 @@ leaks=$(grep -h "names I can see" "$OUT"/*.log | awk '{
 	}
 }')
 check "no player ever saw a name they shouldn't (enemies, or anyone as a demon)" "[ -z \"$leaks\" ]"
-check "angels can see their fellow angels' names" "grep -h 'as angel, names I can see' '$OUT'/*.log | grep -qE 'angel=(Theo|Wife|Brother|Squirrel|Oddy)'"
+check "angels can see their fellow angels' names" "grep -h 'as angel, names I can see' '$OUT'/*.log | grep -qE 'angel=(Abe|Ava|Ben|Cal|Dee)'"
 check "name checks actually ran" "[ \$(grep -h 'names I can see' '$OUT'/*.log | wc -l) -ge 5 ]"
-for n in Wife Brother Squirrel Oddy; do
+for n in Ava Ben Cal Dee; do
 	line=$(grep -m1 "roster:" "$OUT/$n.log")
-	check "$n's Tab roster lists all 5 players" "[ \$(echo \"$line\" | grep -oE '(Theo|Wife|Brother|Squirrel|Oddy)\\((angel|demon),' | wc -l) -eq 5 ]"
+	check "$n's Tab roster lists all 5 players" "[ \$(echo \"$line\" | grep -oE '(Abe|Ava|Ben|Cal|Dee)\\((angel|demon),' | wc -l) -eq 5 ]"
 	check "$n's ping is measured" "echo \"$line\" | grep -qE 'my ping [0-9]+'"
 done
-check "global chat reaches the other team" "grep -q 'Wife: hello_everyone' '$OUT/Oddy.log'"
-check "team chat reaches teammates" "grep -q '\[TEAM\] Brother: demons_only_secret' '$OUT/host.log'"
-check "team chat never reaches the other team" "! grep -q 'demons_only_secret' '$OUT/Wife.log' '$OUT/Squirrel.log'"
+check "global chat reaches the other team" "grep -q 'Ava: hello_everyone' '$OUT/Dee.log'"
+check "team chat reaches teammates" "grep -q '\[TEAM\] Ben: demons_only_secret' '$OUT/host.log'"
+check "team chat never reaches the other team" "! grep -q 'demons_only_secret' '$OUT/Ava.log' '$OUT/Cal.log'"
 # (Whether a hit is counted by the host's own copy of a throw or by the thrower's
 # claim depends on timing, so this only checks that real claims aren't refused for
 # being off the throw's path or behind walls.)
-check "real hit claims aren't refused as impossible" "! grep -E \"refused (Theo|Brother|Squirrel|Oddy)'s hit claim: (not on that throw's path|through a wall)\" '$OUT/host.log'"
-check "a made-up hit claim is refused" "grep -q \"refused Wife's hit claim\" '$OUT/host.log'"
-check "everyone hears who redeemed whom" "grep -qE '\\[news\\] [A-Za-z]+ redeemed [A-Za-z]+!' '$OUT/Wife.log'"
+check "real hit claims aren't refused as impossible" "! grep -E \"refused (Abe|Ben|Cal|Dee)'s hit claim: (not on that throw's path|through a wall)\" '$OUT/host.log'"
+check "a made-up hit claim is refused" "grep -q \"refused Ava's hit claim\" '$OUT/host.log'"
+check "everyone hears who redeemed whom" "grep -qE '\\[news\\] [A-Za-z]+ redeemed [A-Za-z]+!' '$OUT/Ava.log'"
 if [ $(grep -c 'was caught' "$OUT/host.log") -ge 2 ]; then
-	check "everyone hears who the last demon is" "grep -q 'LAST demon standing' '$OUT/Squirrel.log'"
+	check "everyone hears who the last demon is" "grep -q 'LAST demon standing' '$OUT/Cal.log'"
 fi
-if grep -q 'used minion' "$OUT/Brother.log"; then
-	check "a demon sent out a minion and the host showed it to everyone" "grep -q 'Brother sent out a minion' '$OUT/host.log'"
+if grep -q 'used minion' "$OUT/Ben.log"; then
+	check "a demon sent out a minion and the host showed it to everyone" "grep -q 'Ben sent out a minion' '$OUT/host.log'"
 fi
-if grep -qE '(Wife|Brother|Squirrel|Oddy) sat still too long' "$OUT/host.log"; then
-	check "...and that player's game was told" "grep -q 'forced to taunt' '$OUT/Wife.log' '$OUT/Brother.log' '$OUT/Squirrel.log' '$OUT/Oddy.log'"
+if grep -qE '(Ava|Ben|Cal|Dee) sat still too long' "$OUT/host.log"; then
+	check "...and that player's game was told" "grep -q 'forced to taunt' '$OUT/Ava.log' '$OUT/Ben.log' '$OUT/Cal.log' '$OUT/Dee.log'"
 fi
-if grep -q 'BOT Theo: used fear' "$OUT/host.log"; then
+if grep -q 'BOT Abe: used fear' "$OUT/host.log"; then
 	check "Fear: the host scattered the angels near the demon" "grep -qE 'fear: [1-9] angel' '$OUT/host.log'"
-	check "...and a scared angel was told" "grep -q 'scared!' '$OUT/Wife.log' '$OUT/Squirrel.log' '$OUT/Brother.log' '$OUT/Oddy.log'"
+	check "...and a scared angel was told" "grep -q 'scared!' '$OUT/Ava.log' '$OUT/Cal.log' '$OUT/Ben.log' '$OUT/Dee.log'"
 fi
 if grep -qE 'picked up sense' "$OUT/host.log"; then
 	check "Cherub Sense: teammates see the cherub over the angel's head" "grep -q \"cherub over a teammate\" '$OUT'/*.log"
@@ -102,7 +102,7 @@ fi
 if grep -qE 'picked up vanish' "$OUT/host.log"; then
 	check "Invisibility power-up: the host hid the demon from the angels" "grep -q ' vanished' '$OUT/host.log'"
 fi
-if grep -q 'used teleport' "$OUT/Oddy.log"; then
+if grep -q 'used teleport' "$OUT/Dee.log"; then
 	check "Teleport: the host moved the demon" "grep -q 'teleport' '$OUT/host.log'"
 fi
 if grep -q 'was caught' "$OUT/host.log"; then

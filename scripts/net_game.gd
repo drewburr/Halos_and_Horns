@@ -1234,7 +1234,7 @@ func _catch(id: int) -> void:
 	else:
 		s_you_were_caught.rpc_id(id, rec["pos"], by_name)
 	_show_team_powerups(id)   # (their old team's power-ups vanish on their side)
-	# Everyone hears about it: "Wife redeemed Brother!"
+	# Everyone hears about it: "Ava redeemed Ben!"
 	var news := ("%s redeemed %s!" % [by_name, rec["name"]]) if by_name != "" else ("%s was redeemed!" % rec["name"])
 	print("[host] " + news)
 	main.announce(news)

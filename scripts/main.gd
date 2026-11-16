@@ -2464,7 +2464,7 @@ func _handle_command_line() -> void:
 			var m := MapData.load_file(args["map"])
 			if not m.is_empty():
 				load_map(m, args["map"])
-		if net and args.has("roles"):   # e.g. --roles=Theo:demon,Wife:angel
+		if net and args.has("roles"):   # e.g. --roles=Abe:demon,Ava:angel
 			for pair in args["roles"].split(","):
 				var kv: PackedStringArray = pair.split(":")
 				net.forced_roles[kv[0]] = kv[1]

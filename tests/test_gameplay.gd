@@ -468,7 +468,7 @@ func _run() -> void:
 		swapped = swapped and N.better_name(n) in N.BETTER_NAMES
 	check(swapped, "the swapped names get a better one")
 	var kept := true
-	for n in ["Theo", "Dickens", "Bubbles", "Big Bubble", "Benedict", "Müller", "Šárka"]:
+	for n in ["Abe", "Dickens", "Bubbles", "Big Bubble", "Benedict", "Müller", "Šárka"]:
 		kept = kept and N.better_name(n) == n and N.displayable_name(n) == n
 	check(kept, "...normal names are left alone")
 
