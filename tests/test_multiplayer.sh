@@ -5,26 +5,51 @@
 # angel saw only fellow angels' names (demons see none), and the host blocked the cheat.
 #
 # Usage: GODOT=/path/to/godot tests/test_multiplayer.sh
+#        RELAY=1 GODOT=... tests/test_multiplayer.sh    the same match through a relay
+#                                                       server running on this computer
 set -u
 GODOT="${GODOT:-godot}"
 OUT="$(mktemp -d)"
 cd "$(dirname "$0")/.."
 
-"$GODOT" --headless -- --host --name=Abe --autobot --give-sense --autostart=5 --hide=14 --hunt=150 --quit-after-round --skills=possess,fear \
-	--roles=Abe:demon,Ava:angel,Ben:demon,Cal:angel,Dee:demon > "$OUT/host.log" 2>&1 &
+HOST_ARG="--host"
+NET=""
+JOIN="127.0.0.1"
+RELAY_PID=""
+if [ "${RELAY:-0}" = 1 ]; then
+	"$GODOT" --headless -s res://tests/run_relay.gd -- --port=24699 --quit-after=300 > "$OUT/relay.log" 2>&1 &
+	RELAY_PID=$!
+	sleep 2
+	HOST_ARG="--host-relay"
+	NET="--relay=127.0.0.1:24699"
+fi
+
+"$GODOT" --headless -- $HOST_ARG $NET --name=Abe --autobot --give-sense --autostart=5 --hide=14 --hunt=150 --quit-after-round --skills=possess,fear 	--roles=Abe:demon,Ava:angel,Ben:demon,Cal:angel,Dee:demon > "$OUT/host.log" 2>&1 &
+PIDS=($!)
 sleep 3
+if [ -n "$RELAY_PID" ]; then
+	for i in $(seq 20); do
+		JOIN=$(grep -m1 -oE '\[room\] code [A-Z0-9]{5}' "$OUT/host.log" | awk '{print $3}')
+		[ -n "$JOIN" ] && break
+		sleep 0.5
+	done
+	echo "relay room code: ${JOIN:-none}"
+fi
 for n in Ava Ben Cal Dee; do
 	extra=""
 	[ "$n" = "Dee" ] && extra="--cheat=teleport,fly --skills=teleport,fly"
 	[ "$n" = "Ava" ] && extra="--skills=cherub,vacuum --say=hello_everyone --cheat=claim"
 	[ "$n" = "Cal" ] && extra="--skills=dash,leap"
 	[ "$n" = "Ben" ] && extra="--skills=fire,minion --sayteam=demons_only_secret"
-	timeout 240 "$GODOT" --headless -- --join=127.0.0.1 --name=$n --autobot --quit-after-round $extra > "$OUT/$n.log" 2>&1 &
+	timeout 240 "$GODOT" --headless -- --join=$JOIN $NET --name=$n --autobot --quit-after-round $extra > "$OUT/$n.log" 2>&1 &
+	PIDS+=($!)
 	sleep 0.5
 done
 # Someone joining mid-round (an angel) must see the props as they are by then.
-(sleep 24; timeout 200 "$GODOT" --headless -- --join=127.0.0.1 --name=Late --autobot --lazy --quit-after-round > "$OUT/Late.log" 2>&1) &
-wait
+(sleep 24; timeout 200 "$GODOT" --headless -- --join=$JOIN $NET --name=Late --autobot --lazy --quit-after-round > "$OUT/Late.log" 2>&1) &
+PIDS+=($!)
+wait "${PIDS[@]}"
+[ -n "$RELAY_PID" ] && kill "$RELAY_PID" 2>/dev/null
 
 fail=0
 check() { if eval "$2"; then echo "PASS  $1"; else echo "FAIL  $1"; fail=1; fi; }
@@ -110,6 +135,9 @@ if grep -q 'was caught' "$OUT/host.log"; then
 fi
 if grep -q 'now playing as angel' "$OUT/Late.log" 2>/dev/null; then
 	check "a mid-round joiner catches up on taken and moved props" "grep -q 'caught up on the props' '$OUT/Late.log'"
+fi
+if [ -n "$RELAY_PID" ]; then
+	check "the match went through the relay (room $JOIN)" "grep -q 'halos-and-horns room $JOIN opened' '$OUT/relay.log'"
 fi
 check "no player script errors" "! grep -q 'SCRIPT ERROR' '$OUT'/*.log"
 

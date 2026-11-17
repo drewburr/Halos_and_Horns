@@ -1,7 +1,8 @@
 # Halos & Horns: menu, the test map, the HUD, practice mode, and the screens
 # around online play (online rules themselves live in net_game.gd).
 #   Practice: single player. Angel side hunts 3 test demons; demon side is a sandbox.
-#   Online: one player hosts, friends join by address. Mobification rules.
+#   Online: one player hosts, friends join with a room code (through the relay
+#   server) or by address. Mobification rules.
 extends Node3D
 
 const PropLib = preload("res://scripts/prop_library.gd")
@@ -11,6 +12,7 @@ const Sfx = preload("res://scripts/sfx.gd")
 const Blessings = preload("res://scripts/blessings.gd")
 const Taunts = preload("res://scripts/taunts.gd")
 const NetGame = preload("res://scripts/net_game.gd")
+const RelayProtocol = preload("res://relay/relay_protocol.gd")
 const Effects = preload("res://scripts/effects.gd")
 const Autobot = preload("res://scripts/autobot.gd")
 const Skills = preload("res://scripts/skills.gd")
@@ -169,6 +171,8 @@ var lobby_players: Label
 var lobby_info: Label
 var lobby_start: Button
 var _public_ip := ""
+var _room_code := ""          # relay hosting: the code friends join with
+var _relay_override := ""     # --relay=HOST[:PORT]
 var _settings := ConfigFile.new()
 var ping_label: Label
 var scoreboard_panel: PanelContainer
@@ -844,10 +848,15 @@ func _build_menu() -> void:
 	_button(box, "Practice (single player)", start_practice)
 	_button(box, "Creative (build maps)", open_editor)
 	box.add_child(HSeparator.new())
-	port_edit = _field(box, "Port", str(NetGame.DEFAULT_PORT))
-	_button(box, "Host a game", _on_host_pressed)
-	address_edit = _field(box, "Host's address (to join)", "e.g. 203.0.113.5")
+	_button(box, "Host a game", _on_host_relay_pressed)
+	address_edit = _field(box, "Room code (or the host's address)", "e.g. KX4PZ")
 	_button(box, "Join a game", _on_join_pressed)
+	var direct := Label.new()
+	direct.text = "Without the relay server (LAN, or a forwarded port):"
+	direct.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(direct)
+	port_edit = _field(box, "Port", str(NetGame.DEFAULT_PORT))
+	_button(box, "Host directly", _on_host_pressed)
 	box.add_child(HSeparator.new())
 	_button(box, "Controls", _open_controls)
 	_button(box, "Quit", func(): get_tree().quit())
@@ -1243,14 +1252,57 @@ func _on_host_pressed() -> void:
 	online_lobby(lobby_names, "lobby")
 
 
+# Hosting through the relay server: friends join with a room code, no port forwarding.
+func _on_host_relay_pressed() -> void:
+	_save_settings()
+	_make_net()
+	_room_code = ""
+	var r := _relay_address()
+	var err: Error = net.host_relay(r[0], r[1], name_edit.text)
+	if err != OK:
+		_show_menu("Couldn't reach the relay server (error %d)." % err)
+		return
+	mode = "online"
+	player.net_mode = "server"
+	net.send_loadout(loadout)
+	_hide_menus()
+	online_lobby(lobby_names, "lobby")
+
+
+# The relay server's address: the public one, or --relay=HOST[:PORT] (say, one
+# running on this PC for testing).
+func _relay_address() -> Array:
+	if _relay_override == "":
+		return [RelayProtocol.HOST_NAME, RelayProtocol.PORT]
+	var parts := _relay_override.rsplit(":", true, 1)
+	if parts.size() == 2 and parts[1].is_valid_int():
+		return [parts[0], int(parts[1])]
+	return [_relay_override, RelayProtocol.PORT]
+
+
+func online_room_code(code: String) -> void:
+	_room_code = code
+	print("[room] code %s" % code)
+	DisplayServer.clipboard_set(code)
+	if net and lobby_panel.visible:
+		online_lobby(lobby_names, "lobby")
+
+
 func _on_join_pressed() -> void:
 	var address := address_edit.text.strip_edges()
 	if address == "":
-		menu_status.text = "Type the host's address first."
+		menu_status.text = "Type the room code (or the host's address) first."
 		return
 	_save_settings()
 	_make_net()
-	var err: Error = net.join(address, _port(), name_edit.text)
+	# Five letters/numbers is a room code; anything else is an address.
+	var code := RelayProtocol.normalize_code(address)
+	var err: Error
+	if code != "":
+		var r := _relay_address()
+		err = net.join_relay(r[0], r[1], code, name_edit.text)
+	else:
+		err = net.join(address, _port(), name_edit.text)
 	if err != OK:
 		_show_menu("Couldn't start connecting (error %d)." % err)
 		return
@@ -1258,7 +1310,7 @@ func _on_join_pressed() -> void:
 	player.net_mode = "client"
 	player.on_claim = func(seq, eid, point): if net: net.claim_hit(seq, eid, point)
 	_hide_menus()
-	lobby_players.text = "Connecting to %s..." % address
+	lobby_players.text = ("Joining room %s..." % code) if code != "" else ("Connecting to %s..." % address)
 	lobby_info.text = ""
 	lobby_start.visible = false
 	lobby_panel.visible = true
@@ -1490,13 +1542,19 @@ func online_lobby(names: Array, host_phase: String) -> void:
 	if is_host:
 		lobby_start.disabled = names.size() < 2
 		lobby_start.text = "Start round" if names.size() >= 2 else "Start round (need at least 2 players)"
-		var lines := ["Friends join with your address and port %d:" % _port()]
-		if _public_ip != "":
-			lines.append("  Over the internet: %s  (needs the port forwarded on your router)" % _public_ip)
-		var lan := _local_ips()
-		if not lan.is_empty():
-			lines.append("  Same house / same Wi-Fi: %s" % ", ".join(lan))
-		lobby_info.text = "\n".join(lines)
+		if net.using_relay():
+			if _room_code == "":
+				lobby_info.text = "Opening a room on the relay server..."
+			else:
+				lobby_info.text = "Room code:  %s\nFriends type it under Join a game. (It's copied, so you can paste it into Discord.)" % _room_code
+		else:
+			var lines := ["Friends join with your address and port %d:" % _port()]
+			if _public_ip != "":
+				lines.append("  Over the internet: %s  (needs the port forwarded on your router)" % _public_ip)
+			var lan := _local_ips()
+			if not lan.is_empty():
+				lines.append("  Same house / same Wi-Fi: %s" % ", ".join(lan))
+			lobby_info.text = "\n".join(lines)
 	elif host_phase == "lobby":
 		lobby_info.text = "Waiting for the host to start the round..."
 	else:
@@ -2433,6 +2491,9 @@ func _pull_props(center: Vector3) -> void:
 # ---------- command line (automated testing) ----------
 # e.g.  godot -- --host --name=Ted --autostart=3 --hide=5
 #       godot -- --join=127.0.0.1 --name=Bot --autobot
+#       godot -- --host-relay --relay=127.0.0.1 ...   then   --join=KX4PZ --relay=127.0.0.1
+# --host hosts directly and --host-relay through the relay server. --join takes an
+# address or a room code. --relay=HOST[:PORT] picks another relay server.
 
 func _handle_command_line() -> void:
 	var args := {}
@@ -2445,6 +2506,8 @@ func _handle_command_line() -> void:
 		name_edit.text = args["name"]
 	if args.has("port"):
 		port_edit.text = args["port"]
+	if args.has("relay"):
+		_relay_override = args["relay"]
 	if args.has("autobot"):
 		autobot = Autobot.new()
 		autobot.main = self
@@ -2452,8 +2515,11 @@ func _handle_command_line() -> void:
 		add_child(autobot)
 	if args.has("practice"):
 		start_practice()
-	elif args.has("host"):
-		_on_host_pressed()
+	elif args.has("host") or args.has("host-relay"):
+		if args.has("host-relay"):
+			_on_host_relay_pressed()
+		else:
+			_on_host_pressed()
 		if net and args.has("hide"):
 			net.hide_time = float(args["hide"])
 		if net and args.has("hunt"):

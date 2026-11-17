@@ -11,7 +11,7 @@ One small test map (the Playground), placeholder shapes for everything, and Crea
 - **Maps** are plain data files (no code, so a map can't do anything but be a map), saved in your maps folder (Creative has a button that opens it). The host picks the map in the lobby; everyone who joins gets it automatically.
 
 - **Practice:** single player. The angel side hunts 3 test demons (they hop and taunt so you can find them); the demon side is a sandbox for possessing props.
-- **Online:** one player hosts, friends join by address. Mobification rules: caught demons are redeemed and switch to the angels. About one angel per three players.
+- **Online:** one player hosts, friends join with a five-letter room code (no port forwarding), or by address. Mobification rules: caught demons are redeemed and switch to the angels. About one angel per three players.
 - **Skills:** pick 2 per side on the main menu or in the lobby. Angels: Flying Dash (dash where you look or the way your keys point, up into the air too; you keep the momentum until you turn: wide turns cost a little, a quick 180 or a strafe kills it), Alarm Cherub (thrown), Vacuum Orb, Holy Leap (steer it in the air; press its key again mid-air to Cloud Stomp, which hurts every demon within 6 m of where you land: most in the middle, up to double from high up; having it picked also makes all your ordinary jumps higher and easier to steer), Holy Scripture (a heavy book, big holy damage), Holy Kick (boot a demon away). Demons: Possess, Fly, Teleport (to your crosshair, up to 20 m; expensive), Minion (a decoy that quietly appears where you aim, looking like you, or like some prop from the map if you're disguised; hold its key to steer it to the ground under your crosshair; it moves like a real player, hits on it look and sound real, but it pops after a hit or two), Hellfire (costs Hatred; angels in the fire are slowed and their blessings burn away), Fear (a hellish shriek: angels within 10 m who can see you panic for 2 s, scattering away from you with their aim shaking all over; 55 Hatred, 15 s cooldown).
 - **Demons** can **transform** into a copy of any prop (click), or with skills **become** the real one (Possess) and **fly** (hold the key: you rise while Hatred lasts, gravity brings you down; no fall damage).
 - The Alarm Cherub just hovers there tooting its little horn until a demon comes close; then it blasts the horn and shows its detection bubble. Shoot it with a blessing to send it flying down a hallway.
@@ -53,11 +53,20 @@ Making a release (developers): publish a GitHub release tagged like `v0.4.1`. Th
 
 ## Hosting and joining
 
-**Hosting:** click **Host a game**. The lobby shows the addresses friends should use. Pick the hiding and hunting times (and, if you like, a time after which idle angels get kicked; you can also kick someone by hand), then click **Start round** once at least 2 players are in.
-- Friends on the same Wi-Fi use the "same house" address. That needs no setup.
-- Friends over the internet use your internet address, which needs **UDP port 7777 forwarded** on your router to your PC. Windows will also ask to allow the game through the firewall: allow it. On Linux, if you run a firewall, allow UDP port 7777 yourself.
+**Hosting:** click **Host a game**. The lobby shows a five-letter **room code** (it's also copied, so you can paste it straight into Discord). Pick the hiding and hunting times (and, if you like, a time after which idle angels get kicked; you can also kick someone by hand), then click **Start round** once at least 2 players are in. No router setup is needed: games go through a small relay server (see below).
 
-**Joining:** type the host's address, click **Join a game**. Everyone needs exactly the same version as the host; anything else is turned away with a message saying which version to get.
+**Joining:** type the room code, click **Join a game**. Everyone needs exactly the same version as the host; anything else is turned away with a message saying which version to get.
+
+**Without the relay** (same Wi-Fi, or if the relay is down): the host clicks **Host directly** instead, and the lobby shows the addresses to use. Friends type the address (instead of a code) and click **Join a game**.
+- Friends on the same Wi-Fi use the "same house" address. That needs no setup.
+- Friends over the internet use your internet address, which needs **UDP port 7777 forwarded** on your router to your PC (the Port box changes it). Windows will also ask to allow the game through the firewall: allow it. On Linux, if you run a firewall, allow UDP port 7777 yourself.
+
+### The relay server
+
+Room codes work through [game-relay](https://github.com/drewburr-labs/game-relay), a relay Drew runs at `saucer.drewburr.com:24680` that any game can use. The host opens a room, friends join it with the code, and the relay passes packets between them, so nobody forwards ports and nobody sees anyone else's IP address. It only passes bytes along and never reads them: the host is still the referee, and everything below about fairness works the same way.
+- `relay/` is a copy of the relay's scripts at the tag in `relay/VERSION`. Don't edit them here: `tools/update_relay.sh <tag>` moves them to a newer release (`--check` says whether they still match). `scripts/relay_peer.gd` is what lets Godot's multiplayer run through the relay.
+- Limits: one packet can be at most 256 KB (maps are a few KB). The relay can't force someone out of a room, so a kick makes the host ignore that player and tells their game to leave.
+- From the command line (after `--`): `--host-relay` hosts through the relay, `--join=CODE` joins by code (or `--join=ADDRESS` directly), `--relay=HOST[:PORT]` uses a different relay, say one running on this PC: `godot --headless -s res://tests/run_relay.gd -- --port=24680`.
 
 ## Playing from the source (developers)
 
@@ -100,7 +109,7 @@ The host is the referee. It decides every hit (other players' throws are only vi
 
 - `godot --headless -s res://tests/test_gameplay.gd`: practice mode, movement, stamina, taunts.
 - `godot --headless -s res://tests/test_skills.gd`: flying, possess vs transform, per-form health and speed, every angel tool.
-- `GODOT=godot tests/test_multiplayer.sh`: plays a whole 5-player online match with bots, including a cheater, and checks the results and that no names leak.
+- `GODOT=godot tests/test_multiplayer.sh`: plays a whole 5-player online match with bots, including a cheater, and checks the results and that no names leak. With `RELAY=1` it plays the same match through a relay server it runs on this computer.
 - `GODOT=godot tests/test_updater.sh`: exports a build and checks it notices a newer version and offers the download page, without ever downloading or touching a file (Linux only).
 
 ## License

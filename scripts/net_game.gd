@@ -18,6 +18,8 @@ const Effects = preload("res://scripts/effects.gd")
 const Skills = preload("res://scripts/skills.gd")
 const PowerUps = preload("res://scripts/powerups.gd")
 const MapData = preload("res://scripts/map_data.gd")
+const RelayPeer = preload("res://scripts/relay_peer.gd")
+const RP = preload("res://relay/relay_protocol.gd")
 
 const PROTOCOL_VERSION := 5      # (old) kept for reference; joining now checks main.game_build
 # Only the exact same build can join. The build number comes from the release tag
@@ -89,11 +91,56 @@ func join(address: String, port: int, player_name: String) -> Error:
 	if err != OK:
 		return err
 	multiplayer.multiplayer_peer = peer
+	_client_signals(player_name, "Couldn't connect. Check the address, and that the host's port is open.")
+	return OK
+
+
+# Hosting through the relay server: no port forwarding, friends join with a room
+# code. main.online_room_code() gets the code once the relay has opened the room.
+func host_relay(relay_host: String, relay_port: int, player_name: String) -> Error:
+	var peer := RelayPeer.new()
+	var err := peer.host(relay_host, relay_port, MAX_PLAYERS - 1)
+	if err != OK:
+		return err
+	multiplayer.multiplayer_peer = peer
+	is_host = true
+	peer.room_opened.connect(func(code): main.online_room_code(code))
+	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
+	multiplayer.connection_failed.connect(func(): main.online_disconnected(
+			_relay_trouble(peer, "Couldn't reach the relay server. Check your internet connection.")))
+	multiplayer.server_disconnected.connect(func(): main.online_disconnected(
+			_relay_trouble(peer, "Lost the connection to the relay server.")))
+	peers[1] = _new_record(_clean_name(player_name))
+	_broadcast_lobby()
+	return OK
+
+
+func join_relay(relay_host: String, relay_port: int, code: String, player_name: String) -> Error:
+	var peer := RelayPeer.new()
+	var err := peer.join(relay_host, relay_port, code)
+	if err != OK:
+		return err
+	multiplayer.multiplayer_peer = peer
+	_client_signals(player_name, "Couldn't reach the relay server. Check your internet connection.")
+	return OK
+
+
+func _client_signals(player_name: String, cant_connect: String) -> void:
 	multiplayer.connected_to_server.connect(func(): c_hello.rpc_id(1, player_name, main.game_build,
 			main.loadout["angel"], main.loadout["demon"]))
-	multiplayer.connection_failed.connect(func(): main.online_disconnected("Couldn't connect. Check the address, and that the host's port is open."))
-	multiplayer.server_disconnected.connect(func(): main.online_disconnected("The host left the game."))
-	return OK
+	multiplayer.connection_failed.connect(func(): main.online_disconnected(_relay_trouble(multiplayer.multiplayer_peer, cant_connect)))
+	multiplayer.server_disconnected.connect(func(): main.online_disconnected(_relay_trouble(multiplayer.multiplayer_peer, "The host left the game.")))
+
+
+# The relay's reason, when it gave one (wrong code, game full...).
+static func _relay_trouble(peer, fallback: String) -> String:
+	if peer is RelayPeer and peer.refusal != "":
+		return peer.refusal
+	return fallback
+
+
+func using_relay() -> bool:
+	return multiplayer.multiplayer_peer is RelayPeer
 
 
 func leave() -> void:
@@ -1875,8 +1922,11 @@ func s_fx(kind: String, args: Array) -> void:
 
 # ---------------- ping and the Tab roster ----------------
 
-# Round-trip time in milliseconds, as measured by the network library.
+# Round-trip time in milliseconds, as measured by the network library (or by
+# relay_peer.gd, through the relay).
 func ping_to(id: int) -> int:
+	if multiplayer.multiplayer_peer is RelayPeer:
+		return multiplayer.multiplayer_peer.ping_to(id)
 	var enet := multiplayer.multiplayer_peer as ENetMultiplayerPeer
 	if enet == null:
 		return -1
