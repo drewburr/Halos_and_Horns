@@ -63,7 +63,7 @@ Making a release (developers): publish a GitHub release tagged like `v0.4.1`. Th
 
 ### The relay server
 
-Room codes work through [game-relay](https://github.com/drewburr-labs/game-relay), a relay Drew runs at `saucer.drewburr.com:24680` that any game can use. The host opens a room, friends join it with the code, and the relay passes packets between them, so nobody forwards ports and nobody sees anyone else's IP address. It only passes bytes along and never reads them: the host is still the referee, and everything below about fairness works the same way.
+Room codes work through [game-relay](https://github.com/drewburr-labs/game-relay), a relay Drew runs at `relay.drewburr.com:24680` that any game can use. The host opens a room, friends join it with the code, and the relay passes packets between them, so nobody forwards ports and nobody sees anyone else's IP address. It only passes bytes along and never reads them: the host is still the referee, and everything below about fairness works the same way.
 - `relay/` is a copy of the relay's scripts at the tag in `relay/VERSION`. Don't edit them here: `tools/update_relay.sh <tag>` moves them to a newer release (`--check` says whether they still match). `scripts/relay_peer.gd` is what lets Godot's multiplayer run through the relay.
 - Limits: one packet can be at most 256 KB (maps are a few KB). The relay can't force someone out of a room, so a kick makes the host ignore that player and tells their game to leave.
 - From the command line (after `--`): `--host-relay` hosts through the relay, `--join=CODE` joins by code (or `--join=ADDRESS` directly), `--relay=HOST[:PORT]` uses a different relay, say one running on this PC: `godot --headless -s res://tests/run_relay.gd -- --port=24680`.

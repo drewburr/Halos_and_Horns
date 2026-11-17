@@ -13,6 +13,9 @@ const Blessings = preload("res://scripts/blessings.gd")
 const Taunts = preload("res://scripts/taunts.gd")
 const NetGame = preload("res://scripts/net_game.gd")
 const RelayProtocol = preload("res://relay/relay_protocol.gd")
+# Drew's relay server. (relay_protocol.gd names it saucer.drewburr.com, after his
+# game; it's the same server, and Drew asked games to use this name.)
+const RELAY_HOST := "relay.drewburr.com"
 const Effects = preload("res://scripts/effects.gd")
 const Autobot = preload("res://scripts/autobot.gd")
 const Skills = preload("res://scripts/skills.gd")
@@ -1273,7 +1276,7 @@ func _on_host_relay_pressed() -> void:
 # running on this PC for testing).
 func _relay_address() -> Array:
 	if _relay_override == "":
-		return [RelayProtocol.HOST_NAME, RelayProtocol.PORT]
+		return [RELAY_HOST, RelayProtocol.PORT]
 	var parts := _relay_override.rsplit(":", true, 1)
 	if parts.size() == 2 and parts[1].is_valid_int():
 		return [parts[0], int(parts[1])]
